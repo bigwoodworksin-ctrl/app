@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireApiAuth } from "@/lib/auth";
-import { uploadImageToDrive } from "@/lib/drive";
+import { buildOrderPhotoFileName, uploadImageToDrive } from "@/lib/drive";
 import { toClientError } from "@/lib/env";
 import { updatePhotoLink } from "@/lib/sheets";
 
@@ -12,6 +12,7 @@ type UploadBody = {
   fileName?: string;
   mimeType?: string;
   base64Image?: string;
+  personalization?: string;
 };
 
 export async function POST(request: NextRequest) {
@@ -23,6 +24,7 @@ export async function POST(request: NextRequest) {
     const fileName = body.fileName?.trim() || "order-photo.jpg";
     const mimeType = body.mimeType?.trim() || "image/jpeg";
     const base64Image = body.base64Image ?? "";
+    const personalization = body.personalization ?? "";
 
     if (!Number.isInteger(rowNumber) || rowNumber < 2) {
       throw new Error("Invalid row number. Please refresh and try again.");
@@ -36,7 +38,8 @@ export async function POST(request: NextRequest) {
       throw new Error("No image data was received.");
     }
 
-    const imageUrl = await uploadImageToDrive({ fileName, mimeType, base64Image });
+    const driveFileName = buildOrderPhotoFileName(personalization, fileName);
+    const imageUrl = await uploadImageToDrive({ fileName: driveFileName, mimeType, base64Image });
     await updatePhotoLink(rowNumber, imageUrl);
 
     return NextResponse.json({ success: true, imageUrl, rowNumber });

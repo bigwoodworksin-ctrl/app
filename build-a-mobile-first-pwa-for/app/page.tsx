@@ -12,6 +12,14 @@ type SearchRow = {
   priority: 1 | 2;
 };
 
+type Diagnostics = {
+  headers: string[];
+  headerRowNumber: number;
+  dataRowCount: number;
+  requiredColumns: Array<{ name: string; found: boolean }>;
+  sampleRows: Array<{ rowNumber: number; nonEmptyCellCount: number }>;
+};
+
 const TOKEN_KEY = "order-photo-manager-token";
 const SEARCH_DELAY_MS = 300;
 
@@ -28,6 +36,8 @@ export default function HomePage() {
   const [isSearching, setIsSearching] = useState(false);
   const [uploadingRow, setUploadingRow] = useState<number | null>(null);
   const [error, setError] = useState("");
+  const [diagnostics, setDiagnostics] = useState<Diagnostics | null>(null);
+  const [isCheckingSheet, setIsCheckingSheet] = useState(false);
 
   useEffect(() => {
     setToken(window.localStorage.getItem(TOKEN_KEY));
@@ -41,12 +51,6 @@ export default function HomePage() {
 
   useEffect(() => {
     if (!token) {
-      return;
-    }
-
-    if (!trimmedQuery) {
-      setRows([]);
-      setIsSearching(false);
       return;
     }
 
@@ -120,6 +124,36 @@ export default function HomePage() {
     setRows([]);
     setQuery("");
     setError("");
+    setDiagnostics(null);
+  }
+
+  async function handleSheetCheck() {
+    if (!token) {
+      return;
+    }
+
+    setIsCheckingSheet(true);
+    setError("");
+
+    try {
+      const response = await fetch("/api/diagnostics", {
+        headers: {
+          "x-app-token": token
+        }
+      });
+      const data = (await response.json()) as Diagnostics & { error?: string };
+
+      if (!response.ok) {
+        throw new Error(data.error ?? "Sheet check failed.");
+      }
+
+      setDiagnostics(data);
+    } catch (checkError) {
+      setDiagnostics(null);
+      setError((checkError as Error).message);
+    } finally {
+      setIsCheckingSheet(false);
+    }
   }
 
   async function handlePhotoChange(row: SearchRow, event: ChangeEvent<HTMLInputElement>) {
@@ -143,6 +177,7 @@ export default function HomePage() {
         },
         body: JSON.stringify({
           rowNumber: row.rowNumber,
+          personalization: row.personalization,
           ...compressed
         })
       });
@@ -218,18 +253,39 @@ export default function HomePage() {
           autoFocus
         />
         <div className="result-meta">
-          <span>{trimmedQuery ? `${rows.length} result${rows.length === 1 ? "" : "s"}` : "Start typing to search"}</span>
+          <span>{`${rows.length} order${rows.length === 1 ? "" : "s"} shown`}</span>
           {isSearching ? <span>Searching...</span> : null}
         </div>
+        <button className="secondary-button" type="button" onClick={handleSheetCheck} disabled={isCheckingSheet}>
+          {isCheckingSheet ? "Checking Sheet..." : "Sheet Check"}
+        </button>
       </section>
 
       {error ? <p className="error-message">{error}</p> : null}
 
+      {diagnostics ? (
+        <section className="diagnostics-panel" aria-label="Sheet diagnostics">
+          <p>
+            <strong>Header row:</strong> {diagnostics.headerRowNumber}
+          </p>
+          <p>
+            <strong>Rows found:</strong> {diagnostics.dataRowCount}
+          </p>
+          <p>
+            <strong>Headers:</strong> {diagnostics.headers.length ? diagnostics.headers.join(", ") : "No headers found"}
+          </p>
+          <p>
+            <strong>Required columns:</strong>{" "}
+            {diagnostics.requiredColumns.map((column) => `${column.name}: ${column.found ? "yes" : "no"}`).join(" | ")}
+          </p>
+        </section>
+      ) : null}
+
       <section className="results-list" aria-live="polite">
-        {!isSearching && trimmedQuery && rows.length === 0 && !error ? (
+        {!isSearching && rows.length === 0 && !error ? (
           <div className="empty-state">
-            <h2>No matches found</h2>
-            <p>Try another spelling or a shorter part of the personalization text.</p>
+            <h2>{trimmedQuery ? "No matches found" : "No orders found"}</h2>
+            <p>{trimmedQuery ? "Try another spelling or a shorter part of the personalization text." : "Check the Sheet tab name and required column headers."}</p>
           </div>
         ) : null}
 

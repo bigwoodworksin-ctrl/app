@@ -154,6 +154,7 @@ input[type="search"]:focus {
 
 .primary-button,
 .ghost-button,
+.secondary-button,
 .file-button {
   min-height: 48px;
   border: 0;
@@ -179,6 +180,12 @@ input[type="search"]:focus {
 .ghost-button {
   color: var(--primary-dark);
   background: var(--surface-strong);
+}
+
+.secondary-button {
+  width: 100%;
+  color: var(--primary-dark);
+  background: #dde9e3;
 }
 
 .search-panel {
@@ -210,6 +217,27 @@ input[type="search"]:focus {
 .results-list {
   display: grid;
   gap: 12px;
+}
+
+.diagnostics-panel {
+  display: grid;
+  gap: 8px;
+  margin: 0 0 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+  background: #ffffff;
+  color: var(--muted);
+  font-size: 0.88rem;
+  overflow-wrap: anywhere;
+}
+
+.diagnostics-panel p {
+  margin: 0;
+}
+
+.diagnostics-panel strong {
+  color: var(--text);
 }
 
 .result-card,

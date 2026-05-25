@@ -3,9 +3,23 @@ import { getAppEnv } from "./env";
 import { getDriveClient } from "./google";
 
 function safeFileName(fileName: string): string {
-  const cleaned = fileName.replace(/[^\w.\- ]+/g, "-").trim();
-  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-  return cleaned ? `${stamp}-${cleaned}` : `${stamp}-order-photo.jpg`;
+  const cleaned = fileName.replace(/[^\w.\-]+/g, "").trim();
+  return cleaned || "order-photo.jpg";
+}
+
+function dateStamp(date: Date): string {
+  const day = String(date.getDate()).padStart(2, "0");
+  const month = date.toLocaleString("en-US", { month: "short" });
+  const year = String(date.getFullYear());
+
+  return `${day}${month}${year}`;
+}
+
+export function buildOrderPhotoFileName(personalization: string, fallbackFileName: string): string {
+  const prefix = personalization.replace(/[^a-z0-9]/gi, "").slice(0, 2).toUpperCase() || "OR";
+  const extension = fallbackFileName.toLowerCase().endsWith(".png") ? ".png" : ".jpg";
+
+  return safeFileName(`${prefix}${dateStamp(new Date())}${extension}`);
 }
 
 export async function uploadImageToDrive(params: {
