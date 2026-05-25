@@ -1,7 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-label="Order Photo Manager icon">
-  <rect width="512" height="512" rx="112" fill="#176b5b"/>
-  <rect x="102" y="128" width="308" height="256" rx="42" fill="#ffffff"/>
-  <path d="M154 332l68-80 56 62 38-44 48 62H154z" fill="#d9eee7"/>
-  <circle cx="330" cy="202" r="32" fill="#f4c95d"/>
-  <rect x="144" y="410" width="224" height="38" rx="19" fill="#0f4d42"/>
-</svg>
