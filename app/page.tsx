@@ -105,13 +105,17 @@ export default function HomePage() {
   const [cloudinaryDiagnostics, setCloudinaryDiagnostics] = useState<CloudinaryDiagnostics | null>(null);
   const [isCheckingSheet, setIsCheckingSheet] = useState(false);
   const [isCheckingCloudinary, setIsCheckingCloudinary] = useState(false);
+  const [showSplash, setShowSplash] = useState(true);
 
   useEffect(() => {
     setToken(window.localStorage.getItem(TOKEN_KEY));
+    const splashTimer = window.setTimeout(() => setShowSplash(false), 1800);
 
     if ("serviceWorker" in navigator) {
       navigator.serviceWorker.register("/sw.js").catch(() => undefined);
     }
+
+    return () => window.clearTimeout(splashTimer);
   }, []);
 
   const trimmedQuery = useMemo(() => query.trim(), [query]);
@@ -363,6 +367,12 @@ export default function HomePage() {
   if (!token) {
     return (
       <main className="app-shell auth-shell">
+        {showSplash ? (
+          <section className="splash-screen" aria-label="Powered by Nourix Labs">
+            <img src="/brand/nourix-labs.jpeg" alt="Nourix Labs" />
+            <p>Powered by Nourix Labs</p>
+          </section>
+        ) : null}
         <section className="auth-panel" aria-labelledby="login-title">
           <div>
             <p className="eyebrow">Private PWA</p>
@@ -393,6 +403,12 @@ export default function HomePage() {
 
   return (
     <main className="app-shell">
+      {showSplash ? (
+        <section className="splash-screen" aria-label="Powered by Nourix Labs">
+          <img src="/brand/nourix-labs.jpeg" alt="Nourix Labs" />
+          <p>Powered by Nourix Labs</p>
+        </section>
+      ) : null}
       <header className="top-bar">
         <div>
           <p className="eyebrow">Google Sheets + Cloudinary</p>

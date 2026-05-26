@@ -56,6 +56,60 @@ a {
   font-weight: 750;
 }
 
+.splash-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  gap: 20px;
+  padding: 28px;
+  color: #ffffff;
+  background: #050912;
+  animation: splashFade 1.8s ease forwards;
+}
+
+.splash-screen::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at 50% 42%, rgba(46, 226, 229, 0.2), transparent 32%),
+    radial-gradient(circle at 62% 48%, rgba(191, 82, 232, 0.18), transparent 34%),
+    #050912;
+}
+
+.splash-screen img {
+  position: relative;
+  width: min(72vw, 320px);
+  aspect-ratio: 1;
+  border-radius: 0;
+  object-fit: cover;
+  mix-blend-mode: screen;
+}
+
+.splash-screen p {
+  position: relative;
+  margin: 0;
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 0.95rem;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-align: center;
+}
+
+@keyframes splashFade {
+  0%,
+  72% {
+    opacity: 1;
+  }
+
+  100% {
+    opacity: 0;
+    visibility: hidden;
+  }
+}
+
 .app-shell {
   width: min(100%, 760px);
   min-height: 100vh;
