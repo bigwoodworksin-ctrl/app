@@ -124,7 +124,7 @@ export default function HomePage() {
   const [isCheckingSheet, setIsCheckingSheet] = useState(false);
   const [isCheckingCloudinary, setIsCheckingCloudinary] = useState(false);
   const [showSplash, setShowSplash] = useState(true);
-  const [activeView, setActiveView] = useState<"photos" | "shipping">("photos");
+  const [activeView, setActiveView] = useState<"photos" | "shipping" | "settings">("photos");
   const [sheetProfiles, setSheetProfiles] = useState<SheetProfile[]>([]);
   const [activeProfileId, setActiveProfileId] = useState("");
   const [newSheetName, setNewSheetName] = useState("");
@@ -737,58 +737,44 @@ export default function HomePage() {
       ) : null}
       <header className="top-bar">
         <div>
-          <p className="eyebrow">Google Sheets + Cloudinary</p>
-          <h1>{activeView === "photos" ? "Order Photo Manager" : "Shipping Status Manager"}</h1>
+          <p className="eyebrow">{activeView === "settings" ? "Settings" : activeProfile?.name ?? "Default Sheet"}</p>
+          <h1>
+            {activeView === "photos"
+              ? "Order Photos"
+              : activeView === "shipping"
+                ? "Shipping Status"
+                : "Sheet Settings"}
+          </h1>
         </div>
         <button className="ghost-button" onClick={handleSignOut}>
           Sign out
         </button>
       </header>
 
-      <section className="sheet-switcher" aria-label="Sheet and month selector">
-        <div className="field-row">
-          <label htmlFor="sheet-profile">Sheet</label>
-          <select id="sheet-profile" value={activeProfileId} onChange={(event) => handleProfileChange(event.target.value)}>
-            {sheetProfiles.map((profile) => (
-              <option value={profile.id} key={profile.id}>
-                {profile.name}
-              </option>
-            ))}
-          </select>
-        </div>
+      {activeView !== "settings" ? (
+        <section className="sheet-switcher compact-selector" aria-label="Sheet and month selector">
         <div className="field-row">
           <label htmlFor="sheet-tab">Month / tab</label>
           <div className="inline-controls">
-            <input
+            <select
               id="sheet-tab"
               value={activeProfile?.tabName ?? ""}
               onChange={(event) => handleTabChange(event.target.value)}
-              placeholder="Sheet1 or May 2026"
-            />
-            <button className="secondary-button compact" type="button" onClick={handleLoadTabs} disabled={isLoadingTabs}>
-              {isLoadingTabs ? "Loading..." : "Tabs"}
-            </button>
-          </div>
-          {tabs.length > 0 ? (
-            <select value={activeProfile?.tabName ?? ""} onChange={(event) => handleTabChange(event.target.value)}>
-              <option value="">Choose tab</option>
+            >
+              <option value={activeProfile?.tabName ?? ""}>{activeProfile?.tabName || "Select tab"}</option>
               {tabs.map((tab) => (
                 <option value={tab.title} key={tab.sheetId}>
                   {tab.title}
                 </option>
               ))}
             </select>
-          ) : null}
+            <button className="secondary-button compact" type="button" onClick={handleLoadTabs} disabled={isLoadingTabs}>
+              {isLoadingTabs ? "Loading..." : "Tabs"}
+            </button>
+          </div>
         </div>
-        <form className="add-sheet-form" onSubmit={handleAddSheetProfile}>
-          <input value={newSheetName} onChange={(event) => setNewSheetName(event.target.value)} placeholder="Name" />
-          <input value={newSheetUrl} onChange={(event) => setNewSheetUrl(event.target.value)} placeholder="Paste Google Sheet URL" />
-          <input value={newSheetTab} onChange={(event) => setNewSheetTab(event.target.value)} placeholder="Month/tab name" />
-          <button className="secondary-button" type="submit">
-            Add Sheet
-          </button>
-        </form>
       </section>
+      ) : null}
 
       {activeView === "photos" ? (
         <>
@@ -908,7 +894,7 @@ export default function HomePage() {
         ))}
       </section>
         </>
-      ) : (
+      ) : activeView === "shipping" ? (
         <section className="shipping-panel" aria-label="Shipping status manager">
           <form className="tracking-form" onSubmit={handleTrackingSearch}>
             <label htmlFor="tracking-id">Tracking ID</label>
@@ -965,14 +951,62 @@ export default function HomePage() {
             </article>
           ) : null}
         </section>
+      ) : (
+        <section className="settings-panel" aria-label="Sheet settings">
+          <div className="field-row">
+            <label htmlFor="settings-sheet-profile">Active sheet</label>
+            <select id="settings-sheet-profile" value={activeProfileId} onChange={(event) => handleProfileChange(event.target.value)}>
+              {sheetProfiles.map((profile) => (
+                <option value={profile.id} key={profile.id}>
+                  {profile.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="field-row">
+            <label htmlFor="settings-tab">Month / tab</label>
+            <div className="inline-controls">
+              <input
+                id="settings-tab"
+                value={activeProfile?.tabName ?? ""}
+                onChange={(event) => handleTabChange(event.target.value)}
+                placeholder="Sheet1 or May 2026"
+              />
+              <button className="secondary-button compact" type="button" onClick={handleLoadTabs} disabled={isLoadingTabs}>
+                {isLoadingTabs ? "Loading..." : "Load"}
+              </button>
+            </div>
+          </div>
+          <form className="add-sheet-form" onSubmit={handleAddSheetProfile}>
+            <label>Add new sheet</label>
+            <input value={newSheetName} onChange={(event) => setNewSheetName(event.target.value)} placeholder="Name" />
+            <input value={newSheetUrl} onChange={(event) => setNewSheetUrl(event.target.value)} placeholder="Paste Google Sheet URL" />
+            <input value={newSheetTab} onChange={(event) => setNewSheetTab(event.target.value)} placeholder="Month/tab name" />
+            <button className="primary-button" type="submit">
+              Add Sheet
+            </button>
+          </form>
+          <button className="secondary-button" type="button" onClick={handleSheetCheck} disabled={isCheckingSheet}>
+            {isCheckingSheet ? "Checking Sheet..." : "Sheet Check"}
+          </button>
+          <button className="secondary-button" type="button" onClick={handleCloudinaryCheck} disabled={isCheckingCloudinary}>
+            {isCheckingCloudinary ? "Checking Cloudinary..." : "Cloudinary Check"}
+          </button>
+        </section>
       )}
 
       <nav className="bottom-nav" aria-label="Main navigation">
         <button className={activeView === "photos" ? "is-active" : ""} type="button" onClick={() => setActiveView("photos")}>
-          Order Photos
+          <span aria-hidden="true">P</span>
+          <small>Photos</small>
         </button>
         <button className={activeView === "shipping" ? "is-active" : ""} type="button" onClick={() => setActiveView("shipping")}>
-          Shipping Status
+          <span aria-hidden="true">S</span>
+          <small>Shipping</small>
+        </button>
+        <button className={activeView === "settings" ? "is-active" : ""} type="button" onClick={() => setActiveView("settings")}>
+          <span aria-hidden="true">*</span>
+          <small>Settings</small>
         </button>
       </nav>
     </main>

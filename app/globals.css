@@ -266,7 +266,8 @@ select:focus {
 }
 
 .sheet-switcher,
-.shipping-panel {
+.shipping-panel,
+.settings-panel {
   display: grid;
   gap: 12px;
   margin-bottom: 14px;
@@ -275,6 +276,10 @@ select:focus {
   padding: 14px;
   background: rgba(255, 255, 255, 0.94);
   box-shadow: var(--shadow);
+}
+
+.compact-selector {
+  box-shadow: none;
 }
 
 .field-row,
@@ -503,7 +508,7 @@ select:focus {
   z-index: 20;
   width: min(100%, 760px);
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(3, 1fr);
   gap: 8px;
   transform: translateX(-50%);
   border-top: 1px solid var(--border);
@@ -513,11 +518,24 @@ select:focus {
 }
 
 .bottom-nav button {
+  display: grid;
+  place-items: center;
+  gap: 3px;
   min-height: 48px;
   border: 0;
   border-radius: 8px;
   color: var(--muted);
   background: var(--surface-strong);
+  font-weight: 850;
+}
+
+.bottom-nav span {
+  font-size: 1.28rem;
+  line-height: 1;
+}
+
+.bottom-nav small {
+  font-size: 0.72rem;
   font-weight: 850;
 }
 
