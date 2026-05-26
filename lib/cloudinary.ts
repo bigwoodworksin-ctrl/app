@@ -9,12 +9,15 @@ function safePublicId(fileName: string): string {
   return cleaned || "order-photo";
 }
 
-function dateStamp(date: Date): string {
+export function photoTimestamp(date = new Date()): string {
   const day = String(date.getDate()).padStart(2, "0");
   const month = date.toLocaleString("en-US", { month: "short" });
   const year = String(date.getFullYear());
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  const seconds = String(date.getSeconds()).padStart(2, "0");
 
-  return `${day}${month}${year}`;
+  return `${day}${month}${year}${hours}${minutes}${seconds}`;
 }
 
 function signParams(params: Record<string, string | number>, apiSecret: string): string {
@@ -26,11 +29,16 @@ function signParams(params: Record<string, string | number>, apiSecret: string):
   return crypto.createHash("sha1").update(`${payload}${apiSecret}`).digest("hex");
 }
 
-export function buildOrderPhotoFileName(personalization: string, fallbackFileName: string): string {
+export function buildOrderPhotoFileName(
+  personalization: string,
+  fallbackFileName: string,
+  index = 1,
+  timestamp = photoTimestamp()
+): string {
   const prefix = personalization.replace(/[^a-z0-9]/gi, "").slice(0, 2).toUpperCase() || "OR";
   const extension = fallbackFileName.toLowerCase().endsWith(".png") ? ".png" : ".jpg";
 
-  return `${prefix}${dateStamp(new Date())}${extension}`;
+  return `${prefix}${timestamp}-${index}${extension}`;
 }
 
 export async function uploadImageToCloudinary(params: {

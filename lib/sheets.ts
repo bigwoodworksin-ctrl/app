@@ -229,9 +229,16 @@ export async function getSheetDiagnostics() {
   };
 }
 
-export async function updatePhotoLink(rowNumber: number, imageUrl: string): Promise<void> {
+export async function appendPhotoLinks(
+  rowNumber: number,
+  photos: Array<{ timestamp: string; imageUrl: string }>
+): Promise<string> {
   if (!Number.isInteger(rowNumber) || rowNumber < 1) {
     throw new Error("Invalid row number. Expected a data row from the Google Sheet.");
+  }
+
+  if (photos.length === 0) {
+    throw new Error("No photo links were provided for the Sheet update.");
   }
 
   const env = getAppEnv();
@@ -239,6 +246,22 @@ export async function updatePhotoLink(rowNumber: number, imageUrl: string): Prom
   const photoIndex = findColumn(headers, "Photo Link");
   const sheets = getSheetsClient();
   const targetCell = `${columnLetter(photoIndex)}${rowNumber}`;
+  let existingValue = "";
+
+  try {
+    const existing = await sheets.spreadsheets.values.get({
+      spreadsheetId: env.GOOGLE_SHEET_ID,
+      range: `${quoteSheetName(env.GOOGLE_SHEET_TAB_NAME)}!${targetCell}`
+    });
+    existingValue = String(existing.data.values?.[0]?.[0] ?? "").trim();
+  } catch (error) {
+    throw new Error(
+      `Google Sheets read failed before photo update: ${googleApiMessage(error)}. Share the spreadsheet with ${env.GOOGLE_SERVICE_ACCOUNT_EMAIL} as Editor.`
+    );
+  }
+
+  const newLines = photos.map((photo) => `${photo.timestamp} - ${photo.imageUrl}`);
+  const updatedValue = [existingValue, ...newLines].filter(Boolean).join("\n");
 
   try {
     await sheets.spreadsheets.values.update({
@@ -246,7 +269,7 @@ export async function updatePhotoLink(rowNumber: number, imageUrl: string): Prom
       range: `${quoteSheetName(env.GOOGLE_SHEET_TAB_NAME)}!${targetCell}`,
       valueInputOption: "RAW",
       requestBody: {
-        values: [[imageUrl]]
+        values: [[updatedValue]]
       }
     });
   } catch (error) {
@@ -256,4 +279,5 @@ export async function updatePhotoLink(rowNumber: number, imageUrl: string): Prom
   }
 
   clearSheetCache();
+  return updatedValue;
 }

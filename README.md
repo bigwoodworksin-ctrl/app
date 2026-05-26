@@ -9,7 +9,9 @@ A mobile-first Next.js PWA for searching Google Sheet orders by the `Personaliza
 - Dynamic header lookup from the first 10 rows, with no hardcoded column numbers
 - Results sorted so undelivered/non-dispatched rows appear first
 - Camera-friendly `Add Photo` flow with browser JPEG compression
+- Up to 3 images can be uploaded at once for the same order
 - Cloudinary image upload with public secure image URLs
+- Timestamped photo entries are appended to the `Photo Link` cell instead of replacing older links
 - Google Sheets update to the matching row
 - In-memory Sheet cache for fast repeated searches
 - Installable PWA with manifest and service worker
@@ -169,6 +171,7 @@ Returns:
 {
   "success": true,
   "imageUrl": "https://res.cloudinary.com/your-cloud-name/image/upload/...",
+  "photoLink": "26May2026143022 - https://res.cloudinary.com/your-cloud-name/image/upload/...",
   "rowNumber": 2
 }
 ```
@@ -180,4 +183,5 @@ Returns:
 - Search reads are cached in memory for about 45 seconds.
 - Cache is cleared after a successful photo upload.
 - Search returns up to 100 results.
+- Each upload can include up to 3 images. New links are appended to the existing `Photo Link` cell with timestamps.
 - If your spreadsheet title is `Kaleem testscript` but the bottom tab says `Sheet1`, use `Sheet1` for `GOOGLE_SHEET_TAB_NAME`.

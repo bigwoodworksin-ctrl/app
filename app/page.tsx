@@ -31,9 +31,32 @@ type CloudinaryDiagnostics = {
 
 const TOKEN_KEY = "order-photo-manager-token";
 const SEARCH_DELAY_MS = 300;
+const MAX_PHOTOS_PER_UPLOAD = 3;
 
 function friendlyStatus(status: string): string {
   return status.trim() || "No status";
+}
+
+function parsePhotoLinks(photoLink: string): Array<{ label: string; url: string }> {
+  return photoLink
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line, index) => {
+      const match = line.match(/^(.*?)\s+-\s+(https?:\/\/\S+)$/);
+
+      if (match) {
+        return {
+          label: match[1],
+          url: match[2]
+        };
+      }
+
+      return {
+        label: `Photo ${index + 1}`,
+        url: line
+      };
+    });
 }
 
 export default function HomePage() {
@@ -198,18 +221,19 @@ export default function HomePage() {
   }
 
   async function handlePhotoChange(row: SearchRow, event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
+    const selectedFiles = Array.from(event.target.files ?? []);
+    const files = selectedFiles.slice(0, MAX_PHOTOS_PER_UPLOAD);
     event.target.value = "";
 
-    if (!file || !token) {
+    if (files.length === 0 || !token) {
       return;
     }
 
     setUploadingRow(row.rowNumber);
-    setError("");
+    setError(selectedFiles.length > MAX_PHOTOS_PER_UPLOAD ? "Uploading the first 3 selected images." : "");
 
     try {
-      const compressed = await compressImage(file);
+      const photos = await Promise.all(files.map((file) => compressImage(file)));
       const response = await fetch("/api/upload-photo", {
         method: "POST",
         headers: {
@@ -219,18 +243,18 @@ export default function HomePage() {
         body: JSON.stringify({
           rowNumber: row.rowNumber,
           personalization: row.personalization,
-          ...compressed
+          photos
         })
       });
-      const data = (await response.json()) as { success?: boolean; imageUrl?: string; error?: string };
+      const data = (await response.json()) as { success?: boolean; photoLink?: string; error?: string };
 
-      if (!response.ok || !data.success || !data.imageUrl) {
+      if (!response.ok || !data.success || !data.photoLink) {
         throw new Error(data.error ?? "Photo upload failed.");
       }
 
       setRows((currentRows) =>
         currentRows.map((currentRow) =>
-          currentRow.rowNumber === row.rowNumber ? { ...currentRow, photoLink: data.imageUrl ?? "" } : currentRow
+          currentRow.rowNumber === row.rowNumber ? { ...currentRow, photoLink: data.photoLink ?? "" } : currentRow
         )
       );
     } catch (uploadError) {
@@ -361,10 +385,15 @@ export default function HomePage() {
 
             <p className="personalization">{row.personalization || "No personalization text"}</p>
 
-            {row.photoLink ? (
-              <a className="photo-link" href={row.photoLink} target="_blank" rel="noreferrer">
-                Open Photo
-              </a>
+            {parsePhotoLinks(row.photoLink).length > 0 ? (
+              <div className="photo-links">
+                {parsePhotoLinks(row.photoLink).map((photo, index) => (
+                  <a className="photo-link" href={photo.url} target="_blank" rel="noreferrer" key={`${photo.url}-${index}`}>
+                    Open Photo {index + 1}
+                    <span>{photo.label}</span>
+                  </a>
+                ))}
+              </div>
             ) : (
               <p className="muted">No photo link yet</p>
             )}
@@ -374,10 +403,11 @@ export default function HomePage() {
                 type="file"
                 accept="image/*"
                 capture="environment"
+                multiple
                 disabled={uploadingRow !== null}
                 onChange={(event) => handlePhotoChange(row, event)}
               />
-              {uploadingRow === row.rowNumber ? "Uploading..." : "Add Photo"}
+              {uploadingRow === row.rowNumber ? "Uploading..." : "Add Photos"}
             </label>
           </article>
         ))}
