@@ -5,6 +5,8 @@ A mobile-first Next.js PWA for searching Google Sheet orders by the `Personaliza
 ## Features
 
 - Password-protected app shell using `APP_PASSWORD`
+- Bottom navigation for **Order Photos** and **Shipping Status**
+- Add and switch Google Sheets/month tabs from inside the app without redeploying
 - Debounced search against the `Personalization` column
 - Dynamic header lookup from the first 10 rows, with no hardcoded column numbers
 - Results sorted so undelivered/non-dispatched rows appear first
@@ -13,6 +15,7 @@ A mobile-first Next.js PWA for searching Google Sheet orders by the `Personaliza
 - Cloudinary image upload with public secure image URLs
 - Photos are stored across `Photo Link`, `Photo Link 2`, and `Photo Link 3`
 - Uploaded photos can be deleted from the app, which removes the Cloudinary asset and clears the Sheet slot
+- Shipping status manager can find rows by tracking ID, update status, scan supported barcodes from camera images, and upload a dispatch/package photo
 - Google Sheets update to the matching row
 - In-memory Sheet cache for fast repeated searches
 - Installable PWA with manifest and service worker
@@ -26,6 +29,17 @@ The configured tab must include these headers somewhere in the first 10 rows:
 - `Personalization`
 
 You can add more columns anywhere. The app finds required columns by header name. If `Photo Link 2` or `Photo Link 3` are missing, the app adds those headers automatically.
+
+For Shipping Status, the selected tab should also include a tracking column named one of:
+
+- `Tracking ID`
+- `Tracking`
+- `Tracking Number`
+- `Tracking No`
+- `Tracking Code`
+- `Barcode`
+
+The app uses `Carrier / Status` or `Carrier` for status updates. If `Dispatch Photo Link` is missing, the app adds it automatically.
 
 ## Environment Variables
 
@@ -91,6 +105,17 @@ npm run dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000), enter `APP_PASSWORD`, and search by personalization text.
+
+## Add Sheets and Month Tabs In App
+
+After login, use the sheet selector at the top:
+
+1. Enter a friendly sheet name.
+2. Paste a Google Sheet URL.
+3. Enter the month/tab name.
+4. Click **Add Sheet**.
+
+Use the dropdowns to switch Sheets and month tabs. Every added Sheet must be shared with the service account email as **Editor**. This does not require redeploying the app.
 
 ## Deploy to Vercel
 

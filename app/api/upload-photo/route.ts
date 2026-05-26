@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { targetFromBody } from "@/lib/apiTarget";
 import { requireApiAuth } from "@/lib/auth";
 import { buildOrderPhotoFileName, photoTimestamp, uploadImageToCloudinary } from "@/lib/cloudinary";
 import { toClientError } from "@/lib/env";
@@ -13,6 +14,8 @@ type UploadBody = {
   mimeType?: string;
   base64Image?: string;
   personalization?: string;
+  sheetId?: string;
+  tabName?: string;
   photos?: Array<{
     fileName?: string;
     mimeType?: string;
@@ -27,6 +30,7 @@ export async function POST(request: NextRequest) {
     const body = (await request.json()) as UploadBody;
     const rowNumber = Number(body.rowNumber);
     const personalization = body.personalization ?? "";
+    const target = targetFromBody(body);
     const photos =
       body.photos && body.photos.length > 0
         ? body.photos
@@ -42,7 +46,7 @@ export async function POST(request: NextRequest) {
       throw new Error("Invalid row number. Please refresh and try again.");
     }
 
-    const emptySlots = await getEmptyPhotoSlots(rowNumber);
+    const emptySlots = await getEmptyPhotoSlots(rowNumber, target);
 
     if (photos.length > emptySlots.length) {
       throw new Error(`Only ${emptySlots.length} photo slot${emptySlots.length === 1 ? "" : "s"} available for this row.`);
@@ -75,7 +79,7 @@ export async function POST(request: NextRequest) {
       uploadedPhotos.push({ slot, imageUrl });
     }
 
-    const photoLinks = await writePhotoSlots(rowNumber, uploadedPhotos);
+    const photoLinks = await writePhotoSlots(rowNumber, uploadedPhotos, target);
 
     return NextResponse.json({ success: true, imageUrl: uploadedPhotos[0]?.imageUrl, photoLinks, rowNumber });
   } catch (error) {

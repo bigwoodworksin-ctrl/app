@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireApiAuth } from "@/lib/auth";
+import { targetFromRequest } from "@/lib/apiTarget";
 import { toClientError } from "@/lib/env";
 import { searchSheetRows } from "@/lib/sheets";
 
@@ -11,7 +12,7 @@ export async function GET(request: NextRequest) {
     requireApiAuth(request);
 
     const query = request.nextUrl.searchParams.get("q") ?? "";
-    const rows = await searchSheetRows(query, 100);
+    const rows = await searchSheetRows(query, 100, targetFromRequest(request));
 
     return NextResponse.json({ rows });
   } catch (error) {

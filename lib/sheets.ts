@@ -1,4 +1,4 @@
-import { getAppEnv } from "./env";
+import { extractGoogleId, getAppEnv } from "./env";
 import { getSheetsClient } from "./google";
 
 const REQUIRED_COLUMNS = ["Photo Link", "Carrier / Status", "Personalization"] as const;
@@ -9,6 +9,17 @@ const COLUMN_ALIASES: Record<(typeof REQUIRED_COLUMNS)[number], string[]> = {
   Personalization: ["Personalization", "Personalisation", "Personalized", "Personalized Text"]
 };
 const CACHE_TTL_MS = 45_000;
+const TRACKING_COLUMNS = ["Tracking ID", "Carrier / Status", "Dispatch Photo Link"] as const;
+const TRACKING_ALIASES: Record<(typeof TRACKING_COLUMNS)[number], string[]> = {
+  "Tracking ID": ["Tracking ID", "Tracking", "Tracking Number", "Tracking No", "Tracking Code", "Barcode"],
+  "Carrier / Status": COLUMN_ALIASES["Carrier / Status"],
+  "Dispatch Photo Link": ["Dispatch Photo Link", "Dispatch Photo", "Package Photo", "Shipping Photo"]
+};
+
+export type SheetTarget = {
+  sheetId?: string;
+  tabName?: string;
+};
 
 export type SheetRow = {
   rowNumber: number;
@@ -26,6 +37,14 @@ export type PhotoSlot = {
   url: string;
 };
 
+export type ShippingRow = {
+  rowNumber: number;
+  trackingId: string;
+  status: string;
+  personalization: string;
+  dispatchPhotoLink: string;
+};
+
 type SheetCache = {
   expiresAt: number;
   headers: string[];
@@ -34,7 +53,22 @@ type SheetCache = {
   rows: string[][];
 };
 
-let cache: SheetCache | null = null;
+const cache = new Map<string, SheetCache>();
+
+function resolveTarget(target?: SheetTarget) {
+  const env = getAppEnv();
+
+  return {
+    spreadsheetId: extractGoogleId(target?.sheetId?.trim() || env.GOOGLE_SHEET_ID),
+    tabName: target?.tabName?.trim() || env.GOOGLE_SHEET_TAB_NAME,
+    serviceAccountEmail: env.GOOGLE_SERVICE_ACCOUNT_EMAIL
+  };
+}
+
+function cacheKey(target?: SheetTarget): string {
+  const resolved = resolveTarget(target);
+  return `${resolved.spreadsheetId}:${resolved.tabName}`;
+}
 
 function googleApiMessage(error: unknown): string {
   if (typeof error === "object" && error !== null && "response" in error) {
@@ -105,12 +139,17 @@ function findPhotoColumn(headers: string[], slot: 1 | 2 | 3): number {
   return headers.findIndex((value) => normalizedAliases.includes(normalizeHeader(value)));
 }
 
+function findAliasedColumn(headers: string[], aliases: string[]): number {
+  const normalizedAliases = aliases.map(normalizeHeader);
+  return headers.findIndex((header) => normalizedAliases.includes(normalizeHeader(header)));
+}
+
 function getPhotoColumnIndexes(headers: string[]): number[] {
   return PHOTO_COLUMNS.map((_, index) => findPhotoColumn(headers, (index + 1) as 1 | 2 | 3));
 }
 
-async function ensurePhotoColumns(headers: string[], headerRowNumber: number): Promise<string[]> {
-  const env = getAppEnv();
+async function ensurePhotoColumns(headers: string[], headerRowNumber: number, target?: SheetTarget): Promise<string[]> {
+  const resolved = resolveTarget(target);
   const missingHeaders = PHOTO_COLUMNS.filter((_, index) => findPhotoColumn(headers, (index + 1) as 1 | 2 | 3) === -1);
 
   if (missingHeaders.length === 0) {
@@ -125,14 +164,14 @@ async function ensurePhotoColumns(headers: string[], headerRowNumber: number): P
     const targetIndex = nextHeaders.length;
     nextHeaders[targetIndex] = header;
     updates.push({
-      range: `${quoteSheetName(env.GOOGLE_SHEET_TAB_NAME)}!${columnLetter(targetIndex)}${headerRowNumber}`,
+      range: `${quoteSheetName(resolved.tabName)}!${columnLetter(targetIndex)}${headerRowNumber}`,
       values: [[header]]
     });
   }
 
   try {
     await sheets.spreadsheets.values.batchUpdate({
-      spreadsheetId: env.GOOGLE_SHEET_ID,
+      spreadsheetId: resolved.spreadsheetId,
       requestBody: {
         valueInputOption: "RAW",
         data: updates
@@ -140,7 +179,35 @@ async function ensurePhotoColumns(headers: string[], headerRowNumber: number): P
     });
   } catch (error) {
     throw new Error(
-      `Google Sheets header update failed: ${googleApiMessage(error)}. Share the spreadsheet with ${env.GOOGLE_SERVICE_ACCOUNT_EMAIL} as Editor.`
+      `Google Sheets header update failed: ${googleApiMessage(error)}. Share the spreadsheet with ${resolved.serviceAccountEmail} as Editor.`
+    );
+  }
+
+  return nextHeaders;
+}
+
+async function ensureColumn(headers: string[], headerRowNumber: number, header: string, aliases: string[], target?: SheetTarget): Promise<string[]> {
+  if (findAliasedColumn(headers, aliases) !== -1) {
+    return headers;
+  }
+
+  const resolved = resolveTarget(target);
+  const nextHeaders = [...headers];
+  const targetIndex = nextHeaders.length;
+  nextHeaders[targetIndex] = header;
+
+  try {
+    await getSheetsClient().spreadsheets.values.update({
+      spreadsheetId: resolved.spreadsheetId,
+      range: `${quoteSheetName(resolved.tabName)}!${columnLetter(targetIndex)}${headerRowNumber}`,
+      valueInputOption: "RAW",
+      requestBody: {
+        values: [[header]]
+      }
+    });
+  } catch (error) {
+    throw new Error(
+      `Google Sheets header update failed: ${googleApiMessage(error)}. Share the spreadsheet with ${resolved.serviceAccountEmail} as Editor.`
     );
   }
 
@@ -180,19 +247,19 @@ function getPriority(status: string): 1 | 2 {
   return normalized.includes("delivered") || normalized.includes("dispatched") ? 2 : 1;
 }
 
-async function getAvailableTabs(): Promise<Array<{ title: string; sheetId: number }>> {
-  const env = getAppEnv();
+export async function getAvailableTabs(target?: SheetTarget): Promise<Array<{ title: string; sheetId: number }>> {
+  const resolved = resolveTarget(target);
   const sheets = getSheetsClient();
   let response;
 
   try {
     response = await sheets.spreadsheets.get({
-      spreadsheetId: env.GOOGLE_SHEET_ID,
+      spreadsheetId: resolved.spreadsheetId,
       fields: "sheets.properties(sheetId,title)"
     });
   } catch (error) {
     throw new Error(
-      `Google Sheets access failed: ${googleApiMessage(error)}. Share the spreadsheet with ${env.GOOGLE_SERVICE_ACCOUNT_EMAIL} as Editor.`
+      `Google Sheets access failed: ${googleApiMessage(error)}. Share the spreadsheet with ${resolved.serviceAccountEmail} as Editor.`
     );
   }
 
@@ -206,19 +273,22 @@ async function getAvailableTabs(): Promise<Array<{ title: string; sheetId: numbe
   );
 }
 
-async function readSheetValues(): Promise<SheetCache> {
-  if (cache && cache.expiresAt > Date.now()) {
-    return cache;
+async function readSheetValues(target?: SheetTarget): Promise<SheetCache> {
+  const key = cacheKey(target);
+  const cached = cache.get(key);
+
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached;
   }
 
-  const env = getAppEnv();
+  const resolved = resolveTarget(target);
   const sheets = getSheetsClient();
-  const availableTabs = await getAvailableTabs();
-  const activeTab = availableTabs.find((tab) => tab.title === env.GOOGLE_SHEET_TAB_NAME);
+  const availableTabs = await getAvailableTabs(target);
+  const activeTab = availableTabs.find((tab) => tab.title === resolved.tabName);
 
   if (!activeTab) {
     throw new Error(
-      `Google Sheet tab "${env.GOOGLE_SHEET_TAB_NAME}" was not found. Available tabs: ${
+      `Google Sheet tab "${resolved.tabName}" was not found. Available tabs: ${
         availableTabs.map((tab) => tab.title).join(", ") || "none"
       }. Use the exact tab name shown at the bottom of the spreadsheet.`
     );
@@ -228,13 +298,13 @@ async function readSheetValues(): Promise<SheetCache> {
 
   try {
     response = await sheets.spreadsheets.values.get({
-      spreadsheetId: env.GOOGLE_SHEET_ID,
-      range: `${quoteSheetName(env.GOOGLE_SHEET_TAB_NAME)}!A:ZZ`,
+      spreadsheetId: resolved.spreadsheetId,
+      range: `${quoteSheetName(resolved.tabName)}!A:ZZ`,
       valueRenderOption: "FORMULA"
     });
   } catch (error) {
     throw new Error(
-      `Google Sheets read failed: ${googleApiMessage(error)}. Share the spreadsheet with ${env.GOOGLE_SERVICE_ACCOUNT_EMAIL} as Viewer or Editor.`
+      `Google Sheets read failed: ${googleApiMessage(error)}. Share the spreadsheet with ${resolved.serviceAccountEmail} as Viewer or Editor.`
     );
   }
 
@@ -245,9 +315,9 @@ async function readSheetValues(): Promise<SheetCache> {
   }
 
   const { headers, headerRowIndex } = findHeaderRow(values);
-  const finalHeaders = await ensurePhotoColumns(headers, headerRowIndex + 1);
+  const finalHeaders = await ensurePhotoColumns(headers, headerRowIndex + 1, target);
 
-  cache = {
+  const nextCache = {
     expiresAt: Date.now() + CACHE_TTL_MS,
     headers: finalHeaders,
     headerRowNumber: headerRowIndex + 1,
@@ -255,15 +325,21 @@ async function readSheetValues(): Promise<SheetCache> {
     rows: values.slice(headerRowIndex + 1)
   };
 
-  return cache;
+  cache.set(key, nextCache);
+  return nextCache;
 }
 
-export function clearSheetCache() {
-  cache = null;
+export function clearSheetCache(target?: SheetTarget) {
+  if (target) {
+    cache.delete(cacheKey(target));
+    return;
+  }
+
+  cache.clear();
 }
 
-export async function searchSheetRows(query: string, limit = 100): Promise<SheetRow[]> {
-  const { headers, headerRowNumber, rows } = await readSheetValues();
+export async function searchSheetRows(query: string, limit = 100, target?: SheetTarget): Promise<SheetRow[]> {
+  const { headers, headerRowNumber, rows } = await readSheetValues(target);
   const photoIndexes = getPhotoColumnIndexes(headers);
   const statusIndex = findColumn(headers, "Carrier / Status");
   const personalizationIndex = findColumn(headers, "Personalization");
@@ -300,8 +376,8 @@ export async function searchSheetRows(query: string, limit = 100): Promise<Sheet
     .slice(0, limit);
 }
 
-export async function getSheetDiagnostics() {
-  const { headers, headerRowNumber, rows } = await readSheetValues();
+export async function getSheetDiagnostics(target?: SheetTarget) {
+  const { headers, headerRowNumber, rows } = await readSheetValues(target);
 
   return {
     headers,
@@ -320,33 +396,33 @@ export async function getSheetDiagnostics() {
   };
 }
 
-async function readRowValues(rowNumber: number): Promise<string[]> {
-  const env = getAppEnv();
+async function readRowValues(rowNumber: number, target?: SheetTarget): Promise<string[]> {
+  const resolved = resolveTarget(target);
   const sheets = getSheetsClient();
 
   try {
     const response = await sheets.spreadsheets.values.get({
-      spreadsheetId: env.GOOGLE_SHEET_ID,
-      range: `${quoteSheetName(env.GOOGLE_SHEET_TAB_NAME)}!A${rowNumber}:ZZ${rowNumber}`,
+      spreadsheetId: resolved.spreadsheetId,
+      range: `${quoteSheetName(resolved.tabName)}!A${rowNumber}:ZZ${rowNumber}`,
       valueRenderOption: "FORMULA"
     });
 
     return (response.data.values?.[0] ?? []).map(String);
   } catch (error) {
     throw new Error(
-      `Google Sheets row read failed: ${googleApiMessage(error)}. Share the spreadsheet with ${env.GOOGLE_SERVICE_ACCOUNT_EMAIL} as Editor.`
+      `Google Sheets row read failed: ${googleApiMessage(error)}. Share the spreadsheet with ${resolved.serviceAccountEmail} as Editor.`
     );
   }
 }
 
-export async function getEmptyPhotoSlots(rowNumber: number): Promise<Array<1 | 2 | 3>> {
+export async function getEmptyPhotoSlots(rowNumber: number, target?: SheetTarget): Promise<Array<1 | 2 | 3>> {
   if (!Number.isInteger(rowNumber) || rowNumber < 1) {
     throw new Error("Invalid row number. Expected a data row from the Google Sheet.");
   }
 
-  const { headers } = await readSheetValues();
+  const { headers } = await readSheetValues(target);
   const photoIndexes = getPhotoColumnIndexes(headers);
-  const row = await readRowValues(rowNumber);
+  const row = await readRowValues(rowNumber, target);
 
   return photoIndexes
     .map((photoIndex, index) => ({
@@ -359,7 +435,8 @@ export async function getEmptyPhotoSlots(rowNumber: number): Promise<Array<1 | 2
 
 export async function writePhotoSlots(
   rowNumber: number,
-  photos: Array<{ slot: 1 | 2 | 3; imageUrl: string }>
+  photos: Array<{ slot: 1 | 2 | 3; imageUrl: string }>,
+  target?: SheetTarget
 ): Promise<PhotoSlot[]> {
   if (!Number.isInteger(rowNumber) || rowNumber < 1) {
     throw new Error("Invalid row number. Expected a data row from the Google Sheet.");
@@ -369,8 +446,8 @@ export async function writePhotoSlots(
     throw new Error("No photo links were provided for the Sheet update.");
   }
 
-  const env = getAppEnv();
-  const { headers, sheetId } = await readSheetValues();
+  const resolved = resolveTarget(target);
+  const { headers, sheetId } = await readSheetValues(target);
   const photoIndexes = getPhotoColumnIndexes(headers);
   const sheets = getSheetsClient();
   const data = photos.map((photo) => {
@@ -381,14 +458,14 @@ export async function writePhotoSlots(
     }
 
     return {
-      range: `${quoteSheetName(env.GOOGLE_SHEET_TAB_NAME)}!${columnLetter(columnIndex)}${rowNumber}`,
+      range: `${quoteSheetName(resolved.tabName)}!${columnLetter(columnIndex)}${rowNumber}`,
       values: [[photo.imageUrl]]
     };
   });
 
   try {
     await sheets.spreadsheets.values.batchUpdate({
-      spreadsheetId: env.GOOGLE_SHEET_ID,
+      spreadsheetId: resolved.spreadsheetId,
       requestBody: {
         valueInputOption: "USER_ENTERED",
         data
@@ -396,7 +473,7 @@ export async function writePhotoSlots(
     });
 
     await sheets.spreadsheets.batchUpdate({
-      spreadsheetId: env.GOOGLE_SHEET_ID,
+      spreadsheetId: resolved.spreadsheetId,
       requestBody: {
         requests: [
           {
@@ -421,11 +498,11 @@ export async function writePhotoSlots(
     });
   } catch (error) {
     throw new Error(
-      `Google Sheets update failed: ${googleApiMessage(error)}. Share the spreadsheet with ${env.GOOGLE_SERVICE_ACCOUNT_EMAIL} as Editor.`
+      `Google Sheets update failed: ${googleApiMessage(error)}. Share the spreadsheet with ${resolved.serviceAccountEmail} as Editor.`
     );
   }
 
-  clearSheetCache();
+  clearSheetCache(target);
 
   return photos.map((photo) => ({
     slot: photo.slot,
@@ -435,7 +512,7 @@ export async function writePhotoSlots(
   }));
 }
 
-export async function clearPhotoSlot(rowNumber: number, slot: 1 | 2 | 3): Promise<void> {
+export async function clearPhotoSlot(rowNumber: number, slot: 1 | 2 | 3, target?: SheetTarget): Promise<void> {
   if (!Number.isInteger(rowNumber) || rowNumber < 1) {
     throw new Error("Invalid row number. Expected a data row from the Google Sheet.");
   }
@@ -444,8 +521,8 @@ export async function clearPhotoSlot(rowNumber: number, slot: 1 | 2 | 3): Promis
     throw new Error("Invalid photo slot.");
   }
 
-  const env = getAppEnv();
-  const { headers } = await readSheetValues();
+  const resolved = resolveTarget(target);
+  const { headers } = await readSheetValues(target);
   const photoIndex = getPhotoColumnIndexes(headers)[slot - 1];
 
   if (photoIndex === -1) {
@@ -454,14 +531,112 @@ export async function clearPhotoSlot(rowNumber: number, slot: 1 | 2 | 3): Promis
 
   try {
     await getSheetsClient().spreadsheets.values.clear({
-      spreadsheetId: env.GOOGLE_SHEET_ID,
-      range: `${quoteSheetName(env.GOOGLE_SHEET_TAB_NAME)}!${columnLetter(photoIndex)}${rowNumber}`
+      spreadsheetId: resolved.spreadsheetId,
+      range: `${quoteSheetName(resolved.tabName)}!${columnLetter(photoIndex)}${rowNumber}`
     });
   } catch (error) {
     throw new Error(
-      `Google Sheets photo delete failed: ${googleApiMessage(error)}. Share the spreadsheet with ${env.GOOGLE_SERVICE_ACCOUNT_EMAIL} as Editor.`
+      `Google Sheets photo delete failed: ${googleApiMessage(error)}. Share the spreadsheet with ${resolved.serviceAccountEmail} as Editor.`
     );
   }
 
-  clearSheetCache();
+  clearSheetCache(target);
+}
+
+export async function findShippingRowByTracking(trackingId: string, target?: SheetTarget): Promise<ShippingRow | null> {
+  const normalizedTracking = trackingId.trim().toLowerCase();
+
+  if (!normalizedTracking) {
+    return null;
+  }
+
+  let { headers, headerRowNumber, rows } = await readSheetValues(target);
+  headers = await ensureColumn(headers, headerRowNumber, "Dispatch Photo Link", TRACKING_ALIASES["Dispatch Photo Link"], target);
+  clearSheetCache(target);
+
+  const trackingIndex = findAliasedColumn(headers, TRACKING_ALIASES["Tracking ID"]);
+  const statusIndex = findColumn(headers, "Carrier / Status");
+  const personalizationIndex = findColumn(headers, "Personalization");
+  const dispatchPhotoIndex = findAliasedColumn(headers, TRACKING_ALIASES["Dispatch Photo Link"]);
+
+  if (trackingIndex === -1) {
+    throw new Error(`Missing required tracking column. Accepted headers: ${TRACKING_ALIASES["Tracking ID"].join(", ")}.`);
+  }
+
+  const rowIndex = rows.findIndex((row) => String(row[trackingIndex] ?? "").trim().toLowerCase() === normalizedTracking);
+
+  if (rowIndex === -1) {
+    return null;
+  }
+
+  const row = rows[rowIndex];
+
+  return {
+    rowNumber: headerRowNumber + rowIndex + 1,
+    trackingId: row[trackingIndex] ?? "",
+    status: row[statusIndex] ?? "",
+    personalization: row[personalizationIndex] ?? "",
+    dispatchPhotoLink: dispatchPhotoIndex >= 0 ? extractPhotoUrls(row[dispatchPhotoIndex] ?? "")[0] ?? row[dispatchPhotoIndex] ?? "" : ""
+  };
+}
+
+export async function updateShippingStatus(rowNumber: number, status: string, target?: SheetTarget): Promise<void> {
+  if (!Number.isInteger(rowNumber) || rowNumber < 1) {
+    throw new Error("Invalid row number. Expected a data row from the Google Sheet.");
+  }
+
+  const nextStatus = status.trim();
+
+  if (!nextStatus) {
+    throw new Error("Shipping status cannot be blank.");
+  }
+
+  const resolved = resolveTarget(target);
+  const { headers } = await readSheetValues(target);
+  const statusIndex = findColumn(headers, "Carrier / Status");
+
+  try {
+    await getSheetsClient().spreadsheets.values.update({
+      spreadsheetId: resolved.spreadsheetId,
+      range: `${quoteSheetName(resolved.tabName)}!${columnLetter(statusIndex)}${rowNumber}`,
+      valueInputOption: "USER_ENTERED",
+      requestBody: {
+        values: [[nextStatus]]
+      }
+    });
+  } catch (error) {
+    throw new Error(
+      `Google Sheets status update failed: ${googleApiMessage(error)}. Share the spreadsheet with ${resolved.serviceAccountEmail} as Editor.`
+    );
+  }
+
+  clearSheetCache(target);
+}
+
+export async function updateDispatchPhoto(rowNumber: number, imageUrl: string, target?: SheetTarget): Promise<void> {
+  if (!Number.isInteger(rowNumber) || rowNumber < 1) {
+    throw new Error("Invalid row number. Expected a data row from the Google Sheet.");
+  }
+
+  const resolved = resolveTarget(target);
+  let { headers, headerRowNumber } = await readSheetValues(target);
+  headers = await ensureColumn(headers, headerRowNumber, "Dispatch Photo Link", TRACKING_ALIASES["Dispatch Photo Link"], target);
+  const dispatchPhotoIndex = findAliasedColumn(headers, TRACKING_ALIASES["Dispatch Photo Link"]);
+
+  try {
+    await getSheetsClient().spreadsheets.values.update({
+      spreadsheetId: resolved.spreadsheetId,
+      range: `${quoteSheetName(resolved.tabName)}!${columnLetter(dispatchPhotoIndex)}${rowNumber}`,
+      valueInputOption: "USER_ENTERED",
+      requestBody: {
+        values: [[imageUrl]]
+      }
+    });
+  } catch (error) {
+    throw new Error(
+      `Google Sheets dispatch photo update failed: ${googleApiMessage(error)}. Share the spreadsheet with ${resolved.serviceAccountEmail} as Editor.`
+    );
+  }
+
+  clearSheetCache(target);
 }

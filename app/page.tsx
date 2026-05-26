@@ -37,9 +37,27 @@ type CloudinaryDiagnostics = {
   canConnect: boolean;
 };
 
+type SheetProfile = {
+  id: string;
+  name: string;
+  sheetId: string;
+  tabName: string;
+};
+
+type ShippingRow = {
+  rowNumber: number;
+  trackingId: string;
+  status: string;
+  personalization: string;
+  dispatchPhotoLink: string;
+};
+
 const TOKEN_KEY = "order-photo-manager-token";
+const SHEET_PROFILES_KEY = "order-photo-manager-sheet-profiles";
+const ACTIVE_PROFILE_KEY = "order-photo-manager-active-profile";
 const SEARCH_DELAY_MS = 300;
 const MAX_PHOTOS_PER_UPLOAD = 3;
+const SHIPPING_STATUSES = ["Packed", "Dispatched", "In Transit", "Delivered", "Failed", "On Hold"];
 
 function friendlyStatus(status: string): string {
   return status.trim() || "No status";
@@ -106,9 +124,41 @@ export default function HomePage() {
   const [isCheckingSheet, setIsCheckingSheet] = useState(false);
   const [isCheckingCloudinary, setIsCheckingCloudinary] = useState(false);
   const [showSplash, setShowSplash] = useState(true);
+  const [activeView, setActiveView] = useState<"photos" | "shipping">("photos");
+  const [sheetProfiles, setSheetProfiles] = useState<SheetProfile[]>([]);
+  const [activeProfileId, setActiveProfileId] = useState("");
+  const [newSheetName, setNewSheetName] = useState("");
+  const [newSheetUrl, setNewSheetUrl] = useState("");
+  const [newSheetTab, setNewSheetTab] = useState("");
+  const [tabs, setTabs] = useState<Array<{ title: string; sheetId: number }>>([]);
+  const [isLoadingTabs, setIsLoadingTabs] = useState(false);
+  const [trackingInput, setTrackingInput] = useState("");
+  const [shippingRow, setShippingRow] = useState<ShippingRow | null>(null);
+  const [isSearchingTracking, setIsSearchingTracking] = useState(false);
+  const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
+  const [isUploadingDispatch, setIsUploadingDispatch] = useState(false);
+  const [scanMessage, setScanMessage] = useState("");
 
   useEffect(() => {
     setToken(window.localStorage.getItem(TOKEN_KEY));
+    const storedProfiles = window.localStorage.getItem(SHEET_PROFILES_KEY);
+    const defaultProfile: SheetProfile = {
+      id: "default",
+      name: "Default Sheet",
+      sheetId: "",
+      tabName: ""
+    };
+    let parsedProfiles = [defaultProfile];
+
+    try {
+      parsedProfiles = storedProfiles ? (JSON.parse(storedProfiles) as SheetProfile[]) : [defaultProfile];
+    } catch {
+      parsedProfiles = [defaultProfile];
+    }
+    const safeProfiles = parsedProfiles.length > 0 ? parsedProfiles : [defaultProfile];
+
+    setSheetProfiles(safeProfiles);
+    setActiveProfileId(window.localStorage.getItem(ACTIVE_PROFILE_KEY) || safeProfiles[0].id);
     const splashTimer = window.setTimeout(() => setShowSplash(false), 1800);
 
     if ("serviceWorker" in navigator) {
@@ -119,6 +169,45 @@ export default function HomePage() {
   }, []);
 
   const trimmedQuery = useMemo(() => query.trim(), [query]);
+  const activeProfile = sheetProfiles.find((profile) => profile.id === activeProfileId) ?? sheetProfiles[0];
+  const selectedTarget = {
+    sheetId: activeProfile?.sheetId ?? "",
+    tabName: activeProfile?.tabName ?? ""
+  };
+  const targetQuery = new URLSearchParams();
+
+  if (selectedTarget.sheetId) {
+    targetQuery.set("sheetId", selectedTarget.sheetId);
+  }
+
+  if (selectedTarget.tabName) {
+    targetQuery.set("tabName", selectedTarget.tabName);
+  }
+
+  function targetUrl(path: string, extra?: Record<string, string>) {
+    const params = new URLSearchParams(targetQuery);
+
+    for (const [key, value] of Object.entries(extra ?? {})) {
+      params.set(key, value);
+    }
+
+    return `${path}?${params.toString()}`;
+  }
+
+  function targetBody<T extends object>(body: T): T & { sheetId?: string; tabName?: string } {
+    return {
+      ...body,
+      sheetId: selectedTarget.sheetId || undefined,
+      tabName: selectedTarget.tabName || undefined
+    };
+  }
+
+  function saveProfiles(nextProfiles: SheetProfile[], nextActiveId = activeProfileId) {
+    setSheetProfiles(nextProfiles);
+    setActiveProfileId(nextActiveId);
+    window.localStorage.setItem(SHEET_PROFILES_KEY, JSON.stringify(nextProfiles));
+    window.localStorage.setItem(ACTIVE_PROFILE_KEY, nextActiveId);
+  }
 
   useEffect(() => {
     if (!token) {
@@ -131,7 +220,7 @@ export default function HomePage() {
       setError("");
 
       try {
-        const response = await fetch(`/api/search?q=${encodeURIComponent(trimmedQuery)}`, {
+        const response = await fetch(targetUrl("/api/search", { q: trimmedQuery }), {
           headers: {
             "x-app-token": token
           },
@@ -158,7 +247,7 @@ export default function HomePage() {
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [token, trimmedQuery]);
+  }, [token, trimmedQuery, activeProfileId, activeProfile?.sheetId, activeProfile?.tabName]);
 
   async function handleLogin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -199,6 +288,82 @@ export default function HomePage() {
     setCloudinaryDiagnostics(null);
   }
 
+  async function handleLoadTabs() {
+    if (!token || !activeProfile) {
+      return;
+    }
+
+    setIsLoadingTabs(true);
+    setError("");
+
+    try {
+      const response = await fetch(targetUrl("/api/tabs"), {
+        headers: {
+          "x-app-token": token
+        }
+      });
+      const data = (await response.json()) as { tabs?: Array<{ title: string; sheetId: number }>; error?: string };
+
+      if (!response.ok) {
+        throw new Error(data.error ?? "Could not load tabs.");
+      }
+
+      setTabs(data.tabs ?? []);
+    } catch (tabError) {
+      setTabs([]);
+      setError((tabError as Error).message);
+    } finally {
+      setIsLoadingTabs(false);
+    }
+  }
+
+  function handleAddSheetProfile(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!newSheetName.trim() || !newSheetUrl.trim() || !newSheetTab.trim()) {
+      setError("Add a sheet name, Sheet URL, and month/tab name.");
+      return;
+    }
+
+    const nextProfile: SheetProfile = {
+      id: `${Date.now()}`,
+      name: newSheetName.trim(),
+      sheetId: newSheetUrl.trim(),
+      tabName: newSheetTab.trim()
+    };
+    const nextProfiles = [...sheetProfiles, nextProfile];
+
+    saveProfiles(nextProfiles, nextProfile.id);
+    setNewSheetName("");
+    setNewSheetUrl("");
+    setNewSheetTab("");
+    setTabs([]);
+    setError("");
+  }
+
+  function handleProfileChange(profileId: string) {
+    setActiveProfileId(profileId);
+    window.localStorage.setItem(ACTIVE_PROFILE_KEY, profileId);
+    setRows([]);
+    setShippingRow(null);
+    setTabs([]);
+    setError("");
+  }
+
+  function handleTabChange(tabName: string) {
+    if (!activeProfile) {
+      return;
+    }
+
+    const nextProfiles = sheetProfiles.map((profile) =>
+      profile.id === activeProfile.id ? { ...profile, tabName } : profile
+    );
+
+    saveProfiles(nextProfiles, activeProfile.id);
+    setRows([]);
+    setShippingRow(null);
+  }
+
   async function handleSheetCheck() {
     if (!token) {
       return;
@@ -208,7 +373,7 @@ export default function HomePage() {
     setError("");
 
     try {
-      const response = await fetch("/api/diagnostics", {
+      const response = await fetch(targetUrl("/api/diagnostics"), {
         headers: {
           "x-app-token": token
         }
@@ -277,11 +442,13 @@ export default function HomePage() {
           "content-type": "application/json",
           "x-app-token": token
         },
-        body: JSON.stringify({
-          rowNumber: row.rowNumber,
-          personalization: row.personalization,
-          photos
-        })
+        body: JSON.stringify(
+          targetBody({
+            rowNumber: row.rowNumber,
+            personalization: row.personalization,
+            photos
+          })
+        )
       });
       const data = (await response.json()) as { success?: boolean; photoLinks?: PhotoSlot[]; error?: string };
 
@@ -330,11 +497,13 @@ export default function HomePage() {
           "content-type": "application/json",
           "x-app-token": token
         },
-        body: JSON.stringify({
-          rowNumber: row.rowNumber,
-          slot: photo.slot,
-          imageUrl: photo.url
-        })
+        body: JSON.stringify(
+          targetBody({
+            rowNumber: row.rowNumber,
+            slot: photo.slot,
+            imageUrl: photo.url
+          })
+        )
       });
       const data = (await response.json()) as { success?: boolean; error?: string };
 
@@ -361,6 +530,157 @@ export default function HomePage() {
       setError((deleteError as Error).message);
     } finally {
       setDeletingPhoto(null);
+    }
+  }
+
+  async function handleTrackingSearch(event?: FormEvent<HTMLFormElement>) {
+    event?.preventDefault();
+
+    if (!token || !trackingInput.trim()) {
+      return;
+    }
+
+    setIsSearchingTracking(true);
+    setError("");
+    setShippingRow(null);
+
+    try {
+      const response = await fetch(targetUrl("/api/shipping/search", { trackingId: trackingInput.trim() }), {
+        headers: {
+          "x-app-token": token
+        }
+      });
+      const data = (await response.json()) as { row?: ShippingRow | null; error?: string };
+
+      if (!response.ok) {
+        throw new Error(data.error ?? "Tracking search failed.");
+      }
+
+      if (!data.row) {
+        throw new Error("No row found for that tracking ID.");
+      }
+
+      setShippingRow(data.row);
+    } catch (trackingError) {
+      setError((trackingError as Error).message);
+    } finally {
+      setIsSearchingTracking(false);
+    }
+  }
+
+  async function handleStatusUpdate(status: string) {
+    if (!token || !shippingRow) {
+      return;
+    }
+
+    setIsUpdatingStatus(true);
+    setError("");
+
+    try {
+      const response = await fetch("/api/shipping/status", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-app-token": token
+        },
+        body: JSON.stringify(
+          targetBody({
+            rowNumber: shippingRow.rowNumber,
+            status
+          })
+        )
+      });
+      const data = (await response.json()) as { success?: boolean; error?: string };
+
+      if (!response.ok || !data.success) {
+        throw new Error(data.error ?? "Status update failed.");
+      }
+
+      setShippingRow({ ...shippingRow, status });
+    } catch (statusError) {
+      setError((statusError as Error).message);
+    } finally {
+      setIsUpdatingStatus(false);
+    }
+  }
+
+  async function handleDispatchPhoto(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+
+    if (!token || !shippingRow || !file) {
+      return;
+    }
+
+    setIsUploadingDispatch(true);
+    setError("");
+
+    try {
+      const compressed = await compressImage(file);
+      const response = await fetch("/api/shipping/dispatch-photo", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-app-token": token
+        },
+        body: JSON.stringify(
+          targetBody({
+            rowNumber: shippingRow.rowNumber,
+            trackingId: shippingRow.trackingId,
+            ...compressed
+          })
+        )
+      });
+      const data = (await response.json()) as { success?: boolean; imageUrl?: string; error?: string };
+
+      if (!response.ok || !data.success || !data.imageUrl) {
+        throw new Error(data.error ?? "Dispatch photo upload failed.");
+      }
+
+      setShippingRow({ ...shippingRow, dispatchPhotoLink: data.imageUrl });
+    } catch (dispatchError) {
+      setError((dispatchError as Error).message);
+    } finally {
+      setIsUploadingDispatch(false);
+    }
+  }
+
+  async function handleBarcodeImage(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+
+    if (!file) {
+      return;
+    }
+
+    setScanMessage("");
+
+    try {
+      const BarcodeDetectorClass = (window as unknown as {
+        BarcodeDetector?: new (options?: { formats?: string[] }) => {
+          detect: (source: ImageBitmapSource) => Promise<Array<{ rawValue: string }>>;
+        };
+      }).BarcodeDetector;
+
+      if (!BarcodeDetectorClass) {
+        throw new Error("Barcode scanning is not supported in this browser. Type the tracking ID manually.");
+      }
+
+      const detector = new BarcodeDetectorClass({
+        formats: ["code_128", "code_39", "ean_13", "qr_code", "upc_a", "upc_e"]
+      });
+      const bitmap = await createImageBitmap(file);
+      const codes = await detector.detect(bitmap);
+      const rawValue = codes[0]?.rawValue ?? "";
+
+      if (!rawValue) {
+        throw new Error("No barcode found. Try a clearer photo or enter the tracking ID manually.");
+      }
+
+      setTrackingInput(rawValue);
+      setScanMessage(`Scanned: ${rawValue}`);
+    } catch (scanError) {
+      setScanMessage((scanError as Error).message);
     }
   }
 
@@ -418,13 +738,60 @@ export default function HomePage() {
       <header className="top-bar">
         <div>
           <p className="eyebrow">Google Sheets + Cloudinary</p>
-          <h1>Order Photo Manager</h1>
+          <h1>{activeView === "photos" ? "Order Photo Manager" : "Shipping Status Manager"}</h1>
         </div>
         <button className="ghost-button" onClick={handleSignOut}>
           Sign out
         </button>
       </header>
 
+      <section className="sheet-switcher" aria-label="Sheet and month selector">
+        <div className="field-row">
+          <label htmlFor="sheet-profile">Sheet</label>
+          <select id="sheet-profile" value={activeProfileId} onChange={(event) => handleProfileChange(event.target.value)}>
+            {sheetProfiles.map((profile) => (
+              <option value={profile.id} key={profile.id}>
+                {profile.name}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="field-row">
+          <label htmlFor="sheet-tab">Month / tab</label>
+          <div className="inline-controls">
+            <input
+              id="sheet-tab"
+              value={activeProfile?.tabName ?? ""}
+              onChange={(event) => handleTabChange(event.target.value)}
+              placeholder="Sheet1 or May 2026"
+            />
+            <button className="secondary-button compact" type="button" onClick={handleLoadTabs} disabled={isLoadingTabs}>
+              {isLoadingTabs ? "Loading..." : "Tabs"}
+            </button>
+          </div>
+          {tabs.length > 0 ? (
+            <select value={activeProfile?.tabName ?? ""} onChange={(event) => handleTabChange(event.target.value)}>
+              <option value="">Choose tab</option>
+              {tabs.map((tab) => (
+                <option value={tab.title} key={tab.sheetId}>
+                  {tab.title}
+                </option>
+              ))}
+            </select>
+          ) : null}
+        </div>
+        <form className="add-sheet-form" onSubmit={handleAddSheetProfile}>
+          <input value={newSheetName} onChange={(event) => setNewSheetName(event.target.value)} placeholder="Name" />
+          <input value={newSheetUrl} onChange={(event) => setNewSheetUrl(event.target.value)} placeholder="Paste Google Sheet URL" />
+          <input value={newSheetTab} onChange={(event) => setNewSheetTab(event.target.value)} placeholder="Month/tab name" />
+          <button className="secondary-button" type="submit">
+            Add Sheet
+          </button>
+        </form>
+      </section>
+
+      {activeView === "photos" ? (
+        <>
       <section className="search-panel" aria-label="Search orders">
         <label htmlFor="search">Search personalization</label>
         <input
@@ -540,6 +907,74 @@ export default function HomePage() {
           </article>
         ))}
       </section>
+        </>
+      ) : (
+        <section className="shipping-panel" aria-label="Shipping status manager">
+          <form className="tracking-form" onSubmit={handleTrackingSearch}>
+            <label htmlFor="tracking-id">Tracking ID</label>
+            <input
+              id="tracking-id"
+              value={trackingInput}
+              onChange={(event) => setTrackingInput(event.target.value)}
+              placeholder="Scan or type tracking ID"
+            />
+            <div className="shipping-actions">
+              <button className="primary-button" disabled={isSearchingTracking || !trackingInput.trim()}>
+                {isSearchingTracking ? "Searching..." : "Find Tracking"}
+              </button>
+              <label className="secondary-button scan-button">
+                Scan Barcode
+                <input type="file" accept="image/*" capture="environment" onChange={handleBarcodeImage} />
+              </label>
+            </div>
+            {scanMessage ? <p className="muted">{scanMessage}</p> : null}
+          </form>
+
+          {shippingRow ? (
+            <article className="result-card">
+              <div className="card-head">
+                <span className="row-number">Row {shippingRow.rowNumber}</span>
+                <span className="status-badge status-active">{shippingRow.status || "No status"}</span>
+              </div>
+              <p className="personalization">{shippingRow.personalization || shippingRow.trackingId}</p>
+              <p className="muted">Tracking: {shippingRow.trackingId}</p>
+              <div className="status-grid">
+                {SHIPPING_STATUSES.map((status) => (
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    key={status}
+                    disabled={isUpdatingStatus}
+                    onClick={() => handleStatusUpdate(status)}
+                  >
+                    {status}
+                  </button>
+                ))}
+              </div>
+              {shippingRow.dispatchPhotoLink ? (
+                <a className="photo-link dispatch-link" href={shippingRow.dispatchPhotoLink} target="_blank" rel="noreferrer">
+                  Open Dispatch Photo
+                </a>
+              ) : (
+                <p className="muted">No dispatch photo yet</p>
+              )}
+              <label className={`file-button ${isUploadingDispatch ? "is-loading" : ""}`}>
+                <input type="file" accept="image/*" capture="environment" disabled={isUploadingDispatch} onChange={handleDispatchPhoto} />
+                {isUploadingDispatch ? "Uploading..." : "Upload Dispatch Photo"}
+              </label>
+            </article>
+          ) : null}
+        </section>
+      )}
+
+      <nav className="bottom-nav" aria-label="Main navigation">
+        <button className={activeView === "photos" ? "is-active" : ""} type="button" onClick={() => setActiveView("photos")}>
+          Order Photos
+        </button>
+        <button className={activeView === "shipping" ? "is-active" : ""} type="button" onClick={() => setActiveView("shipping")}>
+          Shipping Status
+        </button>
+      </nav>
     </main>
   );
 }
