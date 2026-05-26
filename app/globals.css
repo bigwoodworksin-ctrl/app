@@ -301,7 +301,7 @@ select:focus {
   padding: 10px 14px;
 }
 
-.sheet-strip-name {
+.sheet-strip-name:first-child {
   border-right: 1px solid var(--border);
 }
 

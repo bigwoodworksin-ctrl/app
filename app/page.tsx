@@ -2,7 +2,7 @@
 
 import type { ChangeEvent } from "react";
 import type { FormEvent } from "react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { compressImage } from "@/lib/image";
 
 type SearchRow = {
@@ -37,11 +37,17 @@ type CloudinaryDiagnostics = {
   canConnect: boolean;
 };
 
+type SheetTab = {
+  title: string;
+  sheetId: number;
+};
+
 type SheetProfile = {
   id: string;
   name: string;
   sheetId: string;
   tabName: string;
+  tabs?: SheetTab[];
 };
 
 type ShippingRow = {
@@ -130,8 +136,9 @@ export default function HomePage() {
   const [newSheetName, setNewSheetName] = useState("");
   const [newSheetUrl, setNewSheetUrl] = useState("");
   const [newSheetTab, setNewSheetTab] = useState("");
-  const [tabs, setTabs] = useState<Array<{ title: string; sheetId: number }>>([]);
+  const [newSheetTabs, setNewSheetTabs] = useState<SheetTab[]>([]);
   const [isLoadingTabs, setIsLoadingTabs] = useState(false);
+  const [isFetchingNewSheet, setIsFetchingNewSheet] = useState(false);
   const [trackingInput, setTrackingInput] = useState("");
   const [shippingRow, setShippingRow] = useState<ShippingRow | null>(null);
   const [isSearchingTracking, setIsSearchingTracking] = useState(false);
@@ -155,7 +162,10 @@ export default function HomePage() {
     } catch {
       parsedProfiles = [defaultProfile];
     }
-    const safeProfiles = parsedProfiles.length > 0 ? parsedProfiles : [defaultProfile];
+    const safeProfiles = (parsedProfiles.length > 0 ? parsedProfiles : [defaultProfile]).map((profile) => ({
+      ...profile,
+      tabs: profile.tabs ?? []
+    }));
 
     setSheetProfiles(safeProfiles);
     setActiveProfileId(window.localStorage.getItem(ACTIVE_PROFILE_KEY) || safeProfiles[0].id);
@@ -170,6 +180,7 @@ export default function HomePage() {
 
   const trimmedQuery = useMemo(() => query.trim(), [query]);
   const activeProfile = sheetProfiles.find((profile) => profile.id === activeProfileId) ?? sheetProfiles[0];
+  const activeProfileTabs = activeProfile?.tabs ?? [];
   const selectedTarget = {
     sheetId: activeProfile?.sheetId ?? "",
     tabName: activeProfile?.tabName ?? ""
@@ -208,6 +219,30 @@ export default function HomePage() {
     window.localStorage.setItem(SHEET_PROFILES_KEY, JSON.stringify(nextProfiles));
     window.localStorage.setItem(ACTIVE_PROFILE_KEY, nextActiveId);
   }
+
+  const fetchSheetInfo = useCallback(async (sheetUrl: string, signal?: AbortSignal) => {
+    if (!token) {
+      throw new Error("Unlock the app first.");
+    }
+
+    const params = new URLSearchParams({ sheetId: sheetUrl.trim() });
+    const response = await fetch(`/api/tabs?${params.toString()}`, {
+      headers: {
+        "x-app-token": token
+      },
+      signal
+    });
+    const data = (await response.json()) as { spreadsheetTitle?: string; tabs?: SheetTab[]; error?: string };
+
+    if (!response.ok) {
+      throw new Error(data.error ?? "Could not fetch Sheet details.");
+    }
+
+    return {
+      spreadsheetTitle: data.spreadsheetTitle?.trim() || "Google Sheet",
+      tabs: data.tabs ?? []
+    };
+  }, [token]);
 
   useEffect(() => {
     if (!token) {
@@ -248,6 +283,42 @@ export default function HomePage() {
       controller.abort();
     };
   }, [token, trimmedQuery, activeProfileId, activeProfile?.sheetId, activeProfile?.tabName]);
+
+  useEffect(() => {
+    const sheetUrl = newSheetUrl.trim();
+    const looksLikeSheet = sheetUrl.includes("/spreadsheets/d/") || /^[a-zA-Z0-9-_]{20,}$/.test(sheetUrl);
+
+    if (!token || !sheetUrl || !looksLikeSheet) {
+      return;
+    }
+
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      setIsFetchingNewSheet(true);
+
+      try {
+        const metadata = await fetchSheetInfo(sheetUrl, controller.signal);
+        setNewSheetName(metadata.spreadsheetTitle);
+        setNewSheetTabs(metadata.tabs);
+        setNewSheetTab((currentTab) =>
+          currentTab && metadata.tabs.some((tab) => tab.title === currentTab) ? currentTab : metadata.tabs[0]?.title ?? ""
+        );
+        setError("");
+      } catch (sheetError) {
+        if ((sheetError as Error).name !== "AbortError") {
+          setNewSheetTabs([]);
+          setError((sheetError as Error).message);
+        }
+      } finally {
+        setIsFetchingNewSheet(false);
+      }
+    }, 700);
+
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [token, newSheetUrl, fetchSheetInfo]);
 
   async function handleLogin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -302,34 +373,73 @@ export default function HomePage() {
           "x-app-token": token
         }
       });
-      const data = (await response.json()) as { tabs?: Array<{ title: string; sheetId: number }>; error?: string };
+      const data = (await response.json()) as { spreadsheetTitle?: string; tabs?: SheetTab[]; error?: string };
 
       if (!response.ok) {
         throw new Error(data.error ?? "Could not load tabs.");
       }
 
-      setTabs(data.tabs ?? []);
+      const nextTabs = data.tabs ?? [];
+      const nextTabName =
+        activeProfile.tabName && nextTabs.some((tab) => tab.title === activeProfile.tabName)
+          ? activeProfile.tabName
+          : nextTabs[0]?.title ?? activeProfile.tabName;
+      const nextProfiles = sheetProfiles.map((profile) =>
+        profile.id === activeProfile.id
+          ? {
+              ...profile,
+              name: data.spreadsheetTitle?.trim() || profile.name,
+              tabName: nextTabName,
+              tabs: nextTabs
+            }
+          : profile
+      );
+
+      saveProfiles(nextProfiles, activeProfile.id);
     } catch (tabError) {
-      setTabs([]);
       setError((tabError as Error).message);
     } finally {
       setIsLoadingTabs(false);
     }
   }
 
+  async function handleFetchNewSheetInfo() {
+    if (!token || !newSheetUrl.trim()) {
+      setError("Paste a Google Sheet URL first.");
+      return;
+    }
+
+    setIsFetchingNewSheet(true);
+    setError("");
+
+    try {
+      const metadata = await fetchSheetInfo(newSheetUrl);
+      const nextTabs = metadata.tabs;
+      setNewSheetName(metadata.spreadsheetTitle);
+      setNewSheetTabs(nextTabs);
+      setNewSheetTab(nextTabs[0]?.title ?? "");
+    } catch (sheetError) {
+      setNewSheetTabs([]);
+      setError((sheetError as Error).message);
+    } finally {
+      setIsFetchingNewSheet(false);
+    }
+  }
+
   function handleAddSheetProfile(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    if (!newSheetName.trim() || !newSheetUrl.trim() || !newSheetTab.trim()) {
-      setError("Add a sheet name, Sheet URL, and month/tab name.");
+    if (!newSheetUrl.trim() || !newSheetTab.trim()) {
+      setError("Add a Sheet URL and choose a month/tab.");
       return;
     }
 
     const nextProfile: SheetProfile = {
       id: `${Date.now()}`,
-      name: newSheetName.trim(),
+      name: newSheetName.trim() || "Google Sheet",
       sheetId: newSheetUrl.trim(),
-      tabName: newSheetTab.trim()
+      tabName: newSheetTab.trim(),
+      tabs: newSheetTabs
     };
     const nextProfiles = [...sheetProfiles, nextProfile];
 
@@ -337,7 +447,7 @@ export default function HomePage() {
     setNewSheetName("");
     setNewSheetUrl("");
     setNewSheetTab("");
-    setTabs([]);
+    setNewSheetTabs([]);
     setError("");
   }
 
@@ -346,7 +456,6 @@ export default function HomePage() {
     window.localStorage.setItem(ACTIVE_PROFILE_KEY, profileId);
     setRows([]);
     setShippingRow(null);
-    setTabs([]);
     setError("");
   }
 
@@ -756,23 +865,9 @@ export default function HomePage() {
             <span>Current sheet</span>
             <strong>{activeProfile?.name ?? "Default Sheet"}</strong>
           </div>
-          <div className="sheet-strip-tab">
-            <label htmlFor="sheet-tab">Month / tab</label>
-            <select
-              id="sheet-tab"
-              value={activeProfile?.tabName ?? ""}
-              onChange={(event) => handleTabChange(event.target.value)}
-            >
-              <option value={activeProfile?.tabName ?? ""}>{activeProfile?.tabName || "Select tab"}</option>
-              {tabs.map((tab) => (
-                <option value={tab.title} key={tab.sheetId}>
-                  {tab.title}
-                </option>
-              ))}
-            </select>
-            <button className="secondary-button compact" type="button" onClick={handleLoadTabs} disabled={isLoadingTabs}>
-              {isLoadingTabs ? "Loading..." : "Tabs"}
-            </button>
+          <div className="sheet-strip-name sheet-strip-current-tab">
+            <span>Current tab</span>
+            <strong>{activeProfile?.tabName || "No tab selected"}</strong>
           </div>
         </section>
       ) : null}
@@ -966,22 +1061,38 @@ export default function HomePage() {
           <div className="field-row">
             <label htmlFor="settings-tab">Month / tab</label>
             <div className="inline-controls">
-              <input
+              <select
                 id="settings-tab"
                 value={activeProfile?.tabName ?? ""}
                 onChange={(event) => handleTabChange(event.target.value)}
-                placeholder="Sheet1 or May 2026"
-              />
+              >
+                <option value={activeProfile?.tabName ?? ""}>{activeProfile?.tabName || "Select tab"}</option>
+                {activeProfileTabs.filter((tab) => tab.title !== activeProfile?.tabName).map((tab) => (
+                  <option value={tab.title} key={tab.sheetId}>
+                    {tab.title}
+                  </option>
+                ))}
+              </select>
               <button className="secondary-button compact" type="button" onClick={handleLoadTabs} disabled={isLoadingTabs}>
-                {isLoadingTabs ? "Loading..." : "Load"}
+                {isLoadingTabs ? "Loading..." : "Fetch"}
               </button>
             </div>
           </div>
           <form className="add-sheet-form" onSubmit={handleAddSheetProfile}>
             <label>Add new sheet</label>
-            <input value={newSheetName} onChange={(event) => setNewSheetName(event.target.value)} placeholder="Name" />
             <input value={newSheetUrl} onChange={(event) => setNewSheetUrl(event.target.value)} placeholder="Paste Google Sheet URL" />
-            <input value={newSheetTab} onChange={(event) => setNewSheetTab(event.target.value)} placeholder="Month/tab name" />
+            <button className="secondary-button" type="button" onClick={handleFetchNewSheetInfo} disabled={isFetchingNewSheet || !newSheetUrl.trim()}>
+              {isFetchingNewSheet ? "Fetching Sheet..." : "Fetch Sheet Name & Tabs"}
+            </button>
+            <input value={newSheetName} onChange={(event) => setNewSheetName(event.target.value)} placeholder="Sheet name" />
+            <select value={newSheetTab} onChange={(event) => setNewSheetTab(event.target.value)}>
+              <option value="">{newSheetTabs.length ? "Choose month/tab" : "Fetch tabs first"}</option>
+              {newSheetTabs.map((tab) => (
+                <option value={tab.title} key={tab.sheetId}>
+                  {tab.title}
+                </option>
+              ))}
+            </select>
             <button className="primary-button" type="submit">
               Add Sheet
             </button>

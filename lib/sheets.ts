@@ -290,7 +290,10 @@ function getPriority(status: string): 1 | 2 {
   return normalized.includes("delivered") || normalized.includes("dispatched") ? 2 : 1;
 }
 
-export async function getAvailableTabs(target?: SheetTarget): Promise<Array<{ title: string; sheetId: number }>> {
+export async function getSheetMetadata(target?: SheetTarget): Promise<{
+  spreadsheetTitle: string;
+  tabs: Array<{ title: string; sheetId: number }>;
+}> {
   const resolved = resolveTarget(target);
   const sheets = getSheetsClient();
   let response;
@@ -298,7 +301,7 @@ export async function getAvailableTabs(target?: SheetTarget): Promise<Array<{ ti
   try {
     response = await sheets.spreadsheets.get({
       spreadsheetId: resolved.spreadsheetId,
-      fields: "sheets.properties(sheetId,title)"
+      fields: "properties.title,sheets.properties(sheetId,title)"
     });
   } catch (error) {
     throw new Error(
@@ -306,14 +309,21 @@ export async function getAvailableTabs(target?: SheetTarget): Promise<Array<{ ti
     );
   }
 
-  return (
-    response.data.sheets
+  return {
+    spreadsheetTitle: response.data.properties?.title ?? "Google Sheet",
+    tabs:
+      response.data.sheets
       ?.map((sheet) => ({
         title: sheet.properties?.title ?? "",
         sheetId: sheet.properties?.sheetId ?? 0
       }))
       .filter((sheet) => Boolean(sheet.title)) ?? []
-  );
+  };
+}
+
+export async function getAvailableTabs(target?: SheetTarget): Promise<Array<{ title: string; sheetId: number }>> {
+  const metadata = await getSheetMetadata(target);
+  return metadata.tabs;
 }
 
 async function readSheetValues(target?: SheetTarget, mode: SheetMode = "orders"): Promise<SheetCache> {
