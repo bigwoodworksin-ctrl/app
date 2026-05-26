@@ -158,6 +158,11 @@ a {
   backdrop-filter: blur(16px);
 }
 
+.app-title-bar {
+  min-height: 70px;
+  align-items: center;
+}
+
 .top-bar h1,
 .auth-panel h1 {
   margin: 0;
@@ -278,8 +283,61 @@ select:focus {
   box-shadow: var(--shadow);
 }
 
-.compact-selector {
-  box-shadow: none;
+.sheet-strip {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 0;
+  margin: -16px -14px 16px;
+  border-bottom: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.96);
+}
+
+.sheet-strip-name,
+.sheet-strip-tab {
+  min-height: 72px;
+  display: grid;
+  align-content: center;
+  gap: 5px;
+  padding: 10px 14px;
+}
+
+.sheet-strip-name {
+  border-right: 1px solid var(--border);
+}
+
+.sheet-strip span,
+.sheet-strip label {
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 800;
+}
+
+.sheet-strip strong {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 0.92rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sheet-strip-tab {
+  grid-template-columns: 1fr auto;
+  align-items: center;
+}
+
+.sheet-strip-tab label {
+  grid-column: 1 / -1;
+}
+
+.sheet-strip-tab select {
+  min-height: 38px;
+  padding: 0 8px;
+}
+
+.sheet-strip-tab .compact {
+  min-height: 38px;
+  min-width: 58px;
+  padding: 0 10px;
 }
 
 .field-row,
@@ -318,8 +376,17 @@ select:focus {
 
 .search-panel {
   margin-bottom: 14px;
-  padding: 14px;
+  padding: 16px;
   border-radius: 8px;
+}
+
+.search-panel label {
+  display: none;
+}
+
+.search-panel input[type="search"] {
+  min-height: 54px;
+  border-width: 2px;
 }
 
 .result-meta {
@@ -502,10 +569,10 @@ select:focus {
   width: min(100%, 760px);
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 8px;
+  gap: 0;
   transform: translateX(-50%);
   border-top: 1px solid var(--border);
-  padding: 10px 14px calc(10px + env(safe-area-inset-bottom));
+  padding: 0 0 env(safe-area-inset-bottom);
   background: rgba(255, 255, 255, 0.96);
   backdrop-filter: blur(16px);
 }
@@ -514,12 +581,17 @@ select:focus {
   display: grid;
   place-items: center;
   gap: 3px;
-  min-height: 48px;
+  min-height: 58px;
   border: 0;
-  border-radius: 8px;
+  border-right: 1px solid var(--border);
+  border-radius: 0;
   color: var(--muted);
   background: var(--surface-strong);
   font-weight: 850;
+}
+
+.bottom-nav button:last-child {
+  border-right: 0;
 }
 
 .bottom-nav span {

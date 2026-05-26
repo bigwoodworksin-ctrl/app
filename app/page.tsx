@@ -735,11 +735,8 @@ export default function HomePage() {
           </div>
         </section>
       ) : null}
-      <header className="top-bar">
+      <header className="top-bar app-title-bar">
         <div>
-          <p className="eyebrow">
-            {activeView === "settings" ? "Settings" : `Current sheet: ${activeProfile?.name ?? "Default Sheet"}`}
-          </p>
           <h1>
             {activeView === "photos"
               ? "Order Photos"
@@ -754,10 +751,13 @@ export default function HomePage() {
       </header>
 
       {activeView !== "settings" ? (
-        <section className="sheet-switcher compact-selector" aria-label="Sheet and month selector">
-        <div className="field-row">
-          <label htmlFor="sheet-tab">Month / tab</label>
-          <div className="inline-controls">
+        <section className="sheet-strip" aria-label="Current sheet and month tab">
+          <div className="sheet-strip-name">
+            <span>Current sheet</span>
+            <strong>{activeProfile?.name ?? "Default Sheet"}</strong>
+          </div>
+          <div className="sheet-strip-tab">
+            <label htmlFor="sheet-tab">Month / tab</label>
             <select
               id="sheet-tab"
               value={activeProfile?.tabName ?? ""}
@@ -774,8 +774,7 @@ export default function HomePage() {
               {isLoadingTabs ? "Loading..." : "Tabs"}
             </button>
           </div>
-        </div>
-      </section>
+        </section>
       ) : null}
 
       {activeView === "photos" ? (
