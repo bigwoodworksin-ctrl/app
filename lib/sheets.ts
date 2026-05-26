@@ -26,6 +26,23 @@ type SheetCache = {
 
 let cache: SheetCache | null = null;
 
+function googleApiMessage(error: unknown): string {
+  if (typeof error === "object" && error !== null && "response" in error) {
+    const response = (error as { response?: { data?: { error?: { message?: string } } } }).response;
+    const message = response?.data?.error?.message;
+
+    if (message) {
+      return message;
+    }
+  }
+
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+
+  return "Unknown Google Sheets error.";
+}
+
 function quoteSheetName(name: string): string {
   return `'${name.replace(/'/g, "''")}'`;
 }
@@ -96,10 +113,18 @@ function getPriority(status: string): 1 | 2 {
 async function getAvailableTabNames(): Promise<string[]> {
   const env = getAppEnv();
   const sheets = getSheetsClient();
-  const response = await sheets.spreadsheets.get({
-    spreadsheetId: env.GOOGLE_SHEET_ID,
-    fields: "sheets.properties.title"
-  });
+  let response;
+
+  try {
+    response = await sheets.spreadsheets.get({
+      spreadsheetId: env.GOOGLE_SHEET_ID,
+      fields: "sheets.properties.title"
+    });
+  } catch (error) {
+    throw new Error(
+      `Google Sheets access failed: ${googleApiMessage(error)}. Share the spreadsheet with ${env.GOOGLE_SERVICE_ACCOUNT_EMAIL} as Editor.`
+    );
+  }
 
   return (
     response.data.sheets
@@ -125,10 +150,18 @@ async function readSheetValues(): Promise<SheetCache> {
     );
   }
 
-  const response = await sheets.spreadsheets.values.get({
-    spreadsheetId: env.GOOGLE_SHEET_ID,
-    range: `${quoteSheetName(env.GOOGLE_SHEET_TAB_NAME)}!A:ZZ`
-  });
+  let response;
+
+  try {
+    response = await sheets.spreadsheets.values.get({
+      spreadsheetId: env.GOOGLE_SHEET_ID,
+      range: `${quoteSheetName(env.GOOGLE_SHEET_TAB_NAME)}!A:ZZ`
+    });
+  } catch (error) {
+    throw new Error(
+      `Google Sheets read failed: ${googleApiMessage(error)}. Share the spreadsheet with ${env.GOOGLE_SERVICE_ACCOUNT_EMAIL} as Viewer or Editor.`
+    );
+  }
 
   const values = (response.data.values ?? []).map((row) => row.map(String));
 
@@ -207,14 +240,20 @@ export async function updatePhotoLink(rowNumber: number, imageUrl: string): Prom
   const sheets = getSheetsClient();
   const targetCell = `${columnLetter(photoIndex)}${rowNumber}`;
 
-  await sheets.spreadsheets.values.update({
-    spreadsheetId: env.GOOGLE_SHEET_ID,
-    range: `${quoteSheetName(env.GOOGLE_SHEET_TAB_NAME)}!${targetCell}`,
-    valueInputOption: "RAW",
-    requestBody: {
-      values: [[imageUrl]]
-    }
-  });
+  try {
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: env.GOOGLE_SHEET_ID,
+      range: `${quoteSheetName(env.GOOGLE_SHEET_TAB_NAME)}!${targetCell}`,
+      valueInputOption: "RAW",
+      requestBody: {
+        values: [[imageUrl]]
+      }
+    });
+  } catch (error) {
+    throw new Error(
+      `Google Sheets update failed: ${googleApiMessage(error)}. Share the spreadsheet with ${env.GOOGLE_SERVICE_ACCOUNT_EMAIL} as Editor.`
+    );
+  }
 
   clearSheetCache();
 }
