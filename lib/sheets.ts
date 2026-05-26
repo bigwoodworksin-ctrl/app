@@ -8,6 +8,7 @@ const COLUMN_ALIASES: Record<(typeof REQUIRED_COLUMNS)[number], string[]> = {
   Personalization: ["Personalization", "Personalisation", "Personalized", "Personalized Text"]
 };
 const CACHE_TTL_MS = 45_000;
+const PHOTO_ENTRY_SEPARATOR = " | ";
 
 export type SheetRow = {
   rowNumber: number;
@@ -62,6 +63,40 @@ function columnLetter(index: number): string {
   }
 
   return column;
+}
+
+function escapeFormulaText(value: string): string {
+  return value.replace(/"/g, "\"\"");
+}
+
+function photoEntriesToFormula(entries: string[]): string {
+  const parts = entries.map((entry, index) => {
+    const match = entry.match(/^(.*?)(?:\s+-\s+|:\s*)(https?:\/\/\S+)$/);
+
+    if (!match) {
+      return `"${escapeFormulaText(entry)}"`;
+    }
+
+    const label = match[1].trim() || `Photo ${index + 1}`;
+    const url = match[2];
+
+    return `HYPERLINK("${escapeFormulaText(url)}","${escapeFormulaText(label)}")`;
+  });
+
+  return `=${parts.join(' & " | " & ')}`;
+}
+
+function extractPhotoEntries(value: string): string[] {
+  const formulaMatches = Array.from(value.matchAll(/HYPERLINK\("([^"]+)","([^"]+)"\)/g));
+
+  if (formulaMatches.length > 0) {
+    return formulaMatches.map((match) => `${match[2]}: ${match[1]}`);
+  }
+
+  return value
+    .split(/\r?\n|\s+\|\s+/)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
 }
 
 function findColumn(headers: string[], name: (typeof REQUIRED_COLUMNS)[number]): number {
@@ -155,7 +190,8 @@ async function readSheetValues(): Promise<SheetCache> {
   try {
     response = await sheets.spreadsheets.values.get({
       spreadsheetId: env.GOOGLE_SHEET_ID,
-      range: `${quoteSheetName(env.GOOGLE_SHEET_TAB_NAME)}!A:ZZ`
+      range: `${quoteSheetName(env.GOOGLE_SHEET_TAB_NAME)}!A:ZZ`,
+      valueRenderOption: "FORMULA"
     });
   } catch (error) {
     throw new Error(
@@ -251,7 +287,8 @@ export async function appendPhotoLinks(
   try {
     const existing = await sheets.spreadsheets.values.get({
       spreadsheetId: env.GOOGLE_SHEET_ID,
-      range: `${quoteSheetName(env.GOOGLE_SHEET_TAB_NAME)}!${targetCell}`
+      range: `${quoteSheetName(env.GOOGLE_SHEET_TAB_NAME)}!${targetCell}`,
+      valueRenderOption: "FORMULA"
     });
     existingValue = String(existing.data.values?.[0]?.[0] ?? "").trim();
   } catch (error) {
@@ -260,16 +297,19 @@ export async function appendPhotoLinks(
     );
   }
 
-  const newLines = photos.map((photo) => `${photo.timestamp} - ${photo.imageUrl}`);
-  const updatedValue = [existingValue, ...newLines].filter(Boolean).join("\n");
+  const newEntries = photos.map((photo, index) => `Photo ${index + 1} ${photo.timestamp}: ${photo.imageUrl}`);
+  const existingEntries = extractPhotoEntries(existingValue);
+  const updatedEntries = [...existingEntries, ...newEntries];
+  const updatedValue = updatedEntries.join(PHOTO_ENTRY_SEPARATOR);
+  const formulaValue = photoEntriesToFormula(updatedEntries);
 
   try {
     await sheets.spreadsheets.values.update({
       spreadsheetId: env.GOOGLE_SHEET_ID,
       range: `${quoteSheetName(env.GOOGLE_SHEET_TAB_NAME)}!${targetCell}`,
-      valueInputOption: "RAW",
+      valueInputOption: "USER_ENTERED",
       requestBody: {
-        values: [[updatedValue]]
+        values: [[formulaValue]]
       }
     });
   } catch (error) {

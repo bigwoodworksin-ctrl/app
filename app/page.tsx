@@ -38,12 +38,21 @@ function friendlyStatus(status: string): string {
 }
 
 function parsePhotoLinks(photoLink: string): Array<{ label: string; url: string }> {
+  const formulaMatches = Array.from(photoLink.matchAll(/HYPERLINK\("([^"]+)","([^"]+)"\)/g));
+
+  if (formulaMatches.length > 0) {
+    return formulaMatches.map((match) => ({
+      label: match[2],
+      url: match[1]
+    }));
+  }
+
   return photoLink
-    .split(/\r?\n/)
+    .split(/\r?\n|\s+\|\s+/)
     .map((line) => line.trim())
     .filter(Boolean)
     .map((line, index) => {
-      const match = line.match(/^(.*?)\s+-\s+(https?:\/\/\S+)$/);
+      const match = line.match(/^(.*?)(?:\s+-\s+|:\s*)(https?:\/\/\S+)$/);
 
       if (match) {
         return {
@@ -388,7 +397,13 @@ export default function HomePage() {
             {parsePhotoLinks(row.photoLink).length > 0 ? (
               <div className="photo-links">
                 {parsePhotoLinks(row.photoLink).map((photo, index) => (
-                  <a className="photo-link" href={photo.url} target="_blank" rel="noreferrer" key={`${photo.url}-${index}`}>
+                  <a
+                    className="photo-link"
+                    href={photo.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    key={`${photo.url}-${index}`}
+                  >
                     Open Photo {index + 1}
                     <span>{photo.label}</span>
                   </a>

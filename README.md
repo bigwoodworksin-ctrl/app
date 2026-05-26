@@ -171,7 +171,7 @@ Returns:
 {
   "success": true,
   "imageUrl": "https://res.cloudinary.com/your-cloud-name/image/upload/...",
-  "photoLink": "26May2026143022 - https://res.cloudinary.com/your-cloud-name/image/upload/...",
+  "photoLink": "Photo 1 26May2026143022: https://res.cloudinary.com/your-cloud-name/image/upload/...",
   "rowNumber": 2
 }
 ```
@@ -183,5 +183,5 @@ Returns:
 - Search reads are cached in memory for about 45 seconds.
 - Cache is cleared after a successful photo upload.
 - Search returns up to 100 results.
-- Each upload can include up to 3 images. New links are appended to the existing `Photo Link` cell with timestamps.
+- Each upload can include up to 3 images. New links are appended to the existing `Photo Link` cell as compact clickable timestamp labels.
 - If your spreadsheet title is `Kaleem testscript` but the bottom tab says `Sheet1`, use `Sheet1` for `GOOGLE_SHEET_TAB_NAME`.
