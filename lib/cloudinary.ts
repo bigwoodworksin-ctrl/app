@@ -73,17 +73,34 @@ export async function uploadImageToCloudinary(params: {
 
 export async function checkCloudinaryAccess() {
   const env = getAppEnv();
-  const url = new URL(`https://api.cloudinary.com/v1_1/${env.CLOUDINARY_CLOUD_NAME}/usage`);
-  const auth = Buffer.from(`${env.CLOUDINARY_API_KEY}:${env.CLOUDINARY_API_SECRET}`).toString("base64");
+  const timestamp = Math.floor(Date.now() / 1000);
+  const publicId = `cloudinary-check-${timestamp}`;
+  const signatureParams = {
+    folder: CLOUDINARY_FOLDER,
+    overwrite: "true",
+    public_id: publicId,
+    timestamp
+  };
+  const signature = signParams(signatureParams, env.CLOUDINARY_API_SECRET);
+  const formData = new FormData();
 
-  const response = await fetch(url, {
-    headers: {
-      authorization: `Basic ${auth}`
-    }
+  formData.set(
+    "file",
+    "data:image/gif;base64,R0lGODlhAQABAAAAACw="
+  );
+  formData.set("api_key", env.CLOUDINARY_API_KEY);
+  formData.set("timestamp", String(timestamp));
+  formData.set("signature", signature);
+  formData.set("folder", CLOUDINARY_FOLDER);
+  formData.set("public_id", publicId);
+  formData.set("overwrite", "true");
+
+  const response = await fetch(`https://api.cloudinary.com/v1_1/${env.CLOUDINARY_CLOUD_NAME}/image/upload`, {
+    method: "POST",
+    body: formData
   });
   const data = (await response.json()) as {
-    plan?: string;
-    credits?: { usage?: number; limit?: number };
+    secure_url?: string;
     error?: { message?: string };
   };
 
@@ -93,9 +110,10 @@ export async function checkCloudinaryAccess() {
 
   return {
     cloudName: env.CLOUDINARY_CLOUD_NAME,
-    plan: data.plan ?? "unknown",
-    creditsUsed: data.credits?.usage ?? null,
-    creditsLimit: data.credits?.limit ?? null,
+    plan: "upload access verified",
+    creditsUsed: null,
+    creditsLimit: null,
+    testUrl: data.secure_url ?? null,
     canConnect: true
   };
 }
