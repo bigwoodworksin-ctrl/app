@@ -1,7 +1,7 @@
 {
   "name": "Order Photo Manager",
   "short_name": "Order Photos",
-  "description": "Search Google Sheet orders and attach Google Drive photo links.",
+  "description": "Search Google Sheet orders and attach Cloudinary photo links.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#f5f7f4",
