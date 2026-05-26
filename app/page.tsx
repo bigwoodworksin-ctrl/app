@@ -911,6 +911,8 @@ export default function HomePage() {
             {scanMessage ? <p className="muted">{scanMessage}</p> : null}
           </form>
 
+          {error ? <p className="error-message">{error}</p> : null}
+
           {shippingRow ? (
             <article className="result-card">
               <div className="card-head">

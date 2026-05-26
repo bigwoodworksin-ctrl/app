@@ -11,7 +11,23 @@ const COLUMN_ALIASES: Record<(typeof REQUIRED_COLUMNS)[number], string[]> = {
 const CACHE_TTL_MS = 45_000;
 const TRACKING_COLUMNS = ["Tracking ID", "Carrier / Status", "Dispatch Photo Link"] as const;
 const TRACKING_ALIASES: Record<(typeof TRACKING_COLUMNS)[number], string[]> = {
-  "Tracking ID": ["Tracking ID", "Tracking", "Tracking Number", "Tracking No", "Tracking Code", "Barcode"],
+  "Tracking ID": [
+    "Tracking ID",
+    "Tracking Id",
+    "Tracking",
+    "Tracking #",
+    "Tracking#",
+    "Tracking Number",
+    "Tracking No",
+    "Tracking No.",
+    "Tracking Code",
+    "Barcode",
+    "AWB",
+    "AWB No",
+    "AWB Number",
+    "Consignment No",
+    "Consignment Number"
+  ],
   "Carrier / Status": COLUMN_ALIASES["Carrier / Status"],
   "Dispatch Photo Link": ["Dispatch Photo Link", "Dispatch Photo", "Package Photo", "Shipping Photo"]
 };
@@ -54,6 +70,7 @@ type SheetCache = {
 };
 
 const cache = new Map<string, SheetCache>();
+type SheetMode = "orders" | "shipping";
 
 function resolveTarget(target?: SheetTarget) {
   const env = getAppEnv();
@@ -65,9 +82,9 @@ function resolveTarget(target?: SheetTarget) {
   };
 }
 
-function cacheKey(target?: SheetTarget): string {
+function cacheKey(target?: SheetTarget, mode: SheetMode = "orders"): string {
   const resolved = resolveTarget(target);
-  return `${resolved.spreadsheetId}:${resolved.tabName}`;
+  return `${resolved.spreadsheetId}:${resolved.tabName}:${mode}`;
 }
 
 function googleApiMessage(error: unknown): string {
@@ -93,6 +110,10 @@ function quoteSheetName(name: string): string {
 
 function normalizeHeader(value: string): string {
   return value.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function normalizeTrackingValue(value: string): string {
+  return value.trim().toLowerCase().replace(/\s+/g, "");
 }
 
 function columnLetter(index: number): string {
@@ -214,7 +235,7 @@ async function ensureColumn(headers: string[], headerRowNumber: number, header: 
   return nextHeaders;
 }
 
-function findHeaderRow(values: string[][]): { headers: string[]; headerRowIndex: number } {
+function findOrderHeaderRow(values: string[][]): { headers: string[]; headerRowIndex: number } {
   const rowsToScan = values.slice(0, 10);
 
   for (let index = 0; index < rowsToScan.length; index += 1) {
@@ -239,6 +260,28 @@ function findHeaderRow(values: string[][]): { headers: string[]; headerRowIndex:
 
   throw new Error(
     `Could not find the required header row in the first 10 rows. I saw: ${previewHeaders}. Required columns are Photo Link, Carrier/Status or Carrier, and Personalization.`
+  );
+}
+
+function findShippingHeaderRow(values: string[][]): { headers: string[]; headerRowIndex: number } {
+  const rowsToScan = values.slice(0, 10);
+
+  for (let index = 0; index < rowsToScan.length; index += 1) {
+    const headers = rowsToScan[index].map(String);
+    const hasTracking = findAliasedColumn(headers, TRACKING_ALIASES["Tracking ID"]) !== -1;
+    const hasStatus = findAliasedColumn(headers, TRACKING_ALIASES["Carrier / Status"]) !== -1;
+
+    if (hasTracking && hasStatus) {
+      return { headers, headerRowIndex: index };
+    }
+  }
+
+  const previewHeaders = rowsToScan
+    .map((row, index) => `row ${index + 1}: ${row.filter(Boolean).join(", ") || "blank"}`)
+    .join(" | ");
+
+  throw new Error(
+    `Could not find the shipping header row in the first 10 rows. I saw: ${previewHeaders}. Required columns are Tracking ID/Tracking Number and Carrier/Status or Carrier.`
   );
 }
 
@@ -273,8 +316,8 @@ export async function getAvailableTabs(target?: SheetTarget): Promise<Array<{ ti
   );
 }
 
-async function readSheetValues(target?: SheetTarget): Promise<SheetCache> {
-  const key = cacheKey(target);
+async function readSheetValues(target?: SheetTarget, mode: SheetMode = "orders"): Promise<SheetCache> {
+  const key = cacheKey(target, mode);
   const cached = cache.get(key);
 
   if (cached && cached.expiresAt > Date.now()) {
@@ -314,8 +357,9 @@ async function readSheetValues(target?: SheetTarget): Promise<SheetCache> {
     throw new Error("The selected Google Sheet tab is empty.");
   }
 
-  const { headers, headerRowIndex } = findHeaderRow(values);
-  const finalHeaders = await ensurePhotoColumns(headers, headerRowIndex + 1, target);
+  const { headers, headerRowIndex } =
+    mode === "shipping" ? findShippingHeaderRow(values) : findOrderHeaderRow(values);
+  const finalHeaders = mode === "orders" ? await ensurePhotoColumns(headers, headerRowIndex + 1, target) : headers;
 
   const nextCache = {
     expiresAt: Date.now() + CACHE_TTL_MS,
@@ -331,7 +375,8 @@ async function readSheetValues(target?: SheetTarget): Promise<SheetCache> {
 
 export function clearSheetCache(target?: SheetTarget) {
   if (target) {
-    cache.delete(cacheKey(target));
+    cache.delete(cacheKey(target, "orders"));
+    cache.delete(cacheKey(target, "shipping"));
     return;
   }
 
@@ -544,26 +589,30 @@ export async function clearPhotoSlot(rowNumber: number, slot: 1 | 2 | 3, target?
 }
 
 export async function findShippingRowByTracking(trackingId: string, target?: SheetTarget): Promise<ShippingRow | null> {
-  const normalizedTracking = trackingId.trim().toLowerCase();
+  const normalizedTracking = normalizeTrackingValue(trackingId);
 
   if (!normalizedTracking) {
     return null;
   }
 
-  let { headers, headerRowNumber, rows } = await readSheetValues(target);
+  let { headers, headerRowNumber, rows } = await readSheetValues(target, "shipping");
   headers = await ensureColumn(headers, headerRowNumber, "Dispatch Photo Link", TRACKING_ALIASES["Dispatch Photo Link"], target);
   clearSheetCache(target);
 
   const trackingIndex = findAliasedColumn(headers, TRACKING_ALIASES["Tracking ID"]);
-  const statusIndex = findColumn(headers, "Carrier / Status");
-  const personalizationIndex = findColumn(headers, "Personalization");
+  const statusIndex = findAliasedColumn(headers, TRACKING_ALIASES["Carrier / Status"]);
+  const personalizationIndex = findAliasedColumn(headers, COLUMN_ALIASES.Personalization);
   const dispatchPhotoIndex = findAliasedColumn(headers, TRACKING_ALIASES["Dispatch Photo Link"]);
 
   if (trackingIndex === -1) {
     throw new Error(`Missing required tracking column. Accepted headers: ${TRACKING_ALIASES["Tracking ID"].join(", ")}.`);
   }
 
-  const rowIndex = rows.findIndex((row) => String(row[trackingIndex] ?? "").trim().toLowerCase() === normalizedTracking);
+  if (statusIndex === -1) {
+    throw new Error(`Missing required status column. Accepted headers: ${TRACKING_ALIASES["Carrier / Status"].join(", ")}.`);
+  }
+
+  const rowIndex = rows.findIndex((row) => normalizeTrackingValue(String(row[trackingIndex] ?? "")) === normalizedTracking);
 
   if (rowIndex === -1) {
     return null;
@@ -575,7 +624,7 @@ export async function findShippingRowByTracking(trackingId: string, target?: She
     rowNumber: headerRowNumber + rowIndex + 1,
     trackingId: row[trackingIndex] ?? "",
     status: row[statusIndex] ?? "",
-    personalization: row[personalizationIndex] ?? "",
+    personalization: personalizationIndex >= 0 ? row[personalizationIndex] ?? "" : "",
     dispatchPhotoLink: dispatchPhotoIndex >= 0 ? extractPhotoUrls(row[dispatchPhotoIndex] ?? "")[0] ?? row[dispatchPhotoIndex] ?? "" : ""
   };
 }
@@ -592,8 +641,12 @@ export async function updateShippingStatus(rowNumber: number, status: string, ta
   }
 
   const resolved = resolveTarget(target);
-  const { headers } = await readSheetValues(target);
-  const statusIndex = findColumn(headers, "Carrier / Status");
+  const { headers } = await readSheetValues(target, "shipping");
+  const statusIndex = findAliasedColumn(headers, TRACKING_ALIASES["Carrier / Status"]);
+
+  if (statusIndex === -1) {
+    throw new Error(`Missing required status column. Accepted headers: ${TRACKING_ALIASES["Carrier / Status"].join(", ")}.`);
+  }
 
   try {
     await getSheetsClient().spreadsheets.values.update({
@@ -619,7 +672,7 @@ export async function updateDispatchPhoto(rowNumber: number, imageUrl: string, t
   }
 
   const resolved = resolveTarget(target);
-  let { headers, headerRowNumber } = await readSheetValues(target);
+  let { headers, headerRowNumber } = await readSheetValues(target, "shipping");
   headers = await ensureColumn(headers, headerRowNumber, "Dispatch Photo Link", TRACKING_ALIASES["Dispatch Photo Link"], target);
   const dispatchPhotoIndex = findAliasedColumn(headers, TRACKING_ALIASES["Dispatch Photo Link"]);
 
