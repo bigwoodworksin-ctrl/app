@@ -61,11 +61,12 @@ a {
   inset: 0;
   z-index: 100;
   display: grid;
+  grid-template-rows: 1fr auto;
   place-items: center;
-  gap: 20px;
+  gap: 28px;
   padding: 28px;
   color: #ffffff;
-  background: #050912;
+  background: #f8f6f2;
   animation: splashFade 1.8s ease forwards;
 }
 
@@ -74,28 +75,39 @@ a {
   position: absolute;
   inset: 0;
   background:
-    radial-gradient(circle at 50% 42%, rgba(46, 226, 229, 0.2), transparent 32%),
-    radial-gradient(circle at 62% 48%, rgba(191, 82, 232, 0.18), transparent 34%),
-    #050912;
+    radial-gradient(circle at 50% 38%, rgba(112, 67, 34, 0.12), transparent 34%),
+    linear-gradient(180deg, #ffffff 0%, #f6f0ea 100%);
 }
 
-.splash-screen img {
+.splash-brand-logo {
   position: relative;
-  width: min(72vw, 320px);
+  width: min(78vw, 360px);
   aspect-ratio: 1;
-  border-radius: 0;
-  object-fit: cover;
-  mix-blend-mode: screen;
+  object-fit: contain;
 }
 
-.splash-screen p {
+.splash-powered {
   position: relative;
-  margin: 0;
-  color: rgba(255, 255, 255, 0.9);
-  font-size: 0.95rem;
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.splash-powered span {
+  color: #5f5044;
+  font-size: 0.78rem;
   font-weight: 800;
   letter-spacing: 0;
   text-align: center;
+  text-transform: uppercase;
+}
+
+.splash-powered img {
+  width: 96px;
+  height: 96px;
+  border-radius: 999px;
+  object-fit: cover;
 }
 
 @keyframes splashFade {

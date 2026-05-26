@@ -369,8 +369,11 @@ export default function HomePage() {
       <main className="app-shell auth-shell">
         {showSplash ? (
           <section className="splash-screen" aria-label="Powered by Nourix Labs">
-            <img src="/brand/nourix-labs.jpeg" alt="Nourix Labs" />
-            <p>Powered by Nourix Labs</p>
+            <img className="splash-brand-logo" src="/icons/icon-512.png" alt="Big Wood Works" />
+            <div className="splash-powered">
+              <span>Powered by</span>
+              <img src="/brand/nourix-labs.jpeg" alt="Nourix Labs" />
+            </div>
           </section>
         ) : null}
         <section className="auth-panel" aria-labelledby="login-title">
@@ -405,8 +408,11 @@ export default function HomePage() {
     <main className="app-shell">
       {showSplash ? (
         <section className="splash-screen" aria-label="Powered by Nourix Labs">
-          <img src="/brand/nourix-labs.jpeg" alt="Nourix Labs" />
-          <p>Powered by Nourix Labs</p>
+          <img className="splash-brand-logo" src="/icons/icon-512.png" alt="Big Wood Works" />
+          <div className="splash-powered">
+            <span>Powered by</span>
+            <img src="/brand/nourix-labs.jpeg" alt="Nourix Labs" />
+          </div>
         </section>
       ) : null}
       <header className="top-bar">
