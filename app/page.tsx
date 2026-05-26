@@ -862,10 +862,12 @@ export default function HomePage() {
       {activeView !== "settings" ? (
         <section className="sheet-strip" aria-label="Current sheet and month tab">
           <div className="sheet-strip-name">
+            <img className="sheet-strip-icon" src="/icons/spreadsheet.svg" alt="" aria-hidden="true" />
             <span>Current sheet</span>
             <strong>{activeProfile?.name ?? "Default Sheet"}</strong>
           </div>
           <div className="sheet-strip-name sheet-strip-current-tab">
+            <img className="sheet-strip-icon" src="/icons/spreadsheet.svg" alt="" aria-hidden="true" />
             <span>Current tab</span>
             <strong>{activeProfile?.tabName || "No tab selected"}</strong>
           </div>
@@ -1050,29 +1052,35 @@ export default function HomePage() {
         <section className="settings-panel" aria-label="Sheet settings">
           <div className="field-row">
             <label htmlFor="settings-sheet-profile">Active sheet</label>
-            <select id="settings-sheet-profile" value={activeProfileId} onChange={(event) => handleProfileChange(event.target.value)}>
-              {sheetProfiles.map((profile) => (
-                <option value={profile.id} key={profile.id}>
-                  {profile.name}
-                </option>
-              ))}
-            </select>
+            <div className="icon-field">
+              <img src="/icons/spreadsheet.svg" alt="" aria-hidden="true" />
+              <select id="settings-sheet-profile" value={activeProfileId} onChange={(event) => handleProfileChange(event.target.value)}>
+                {sheetProfiles.map((profile) => (
+                  <option value={profile.id} key={profile.id}>
+                    {profile.name}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
           <div className="field-row">
             <label htmlFor="settings-tab">Month / tab</label>
             <div className="inline-controls">
-              <select
-                id="settings-tab"
-                value={activeProfile?.tabName ?? ""}
-                onChange={(event) => handleTabChange(event.target.value)}
-              >
-                <option value={activeProfile?.tabName ?? ""}>{activeProfile?.tabName || "Select tab"}</option>
-                {activeProfileTabs.filter((tab) => tab.title !== activeProfile?.tabName).map((tab) => (
-                  <option value={tab.title} key={tab.sheetId}>
-                    {tab.title}
-                  </option>
-                ))}
-              </select>
+              <div className="icon-field">
+                <img src="/icons/spreadsheet.svg" alt="" aria-hidden="true" />
+                <select
+                  id="settings-tab"
+                  value={activeProfile?.tabName ?? ""}
+                  onChange={(event) => handleTabChange(event.target.value)}
+                >
+                  <option value={activeProfile?.tabName ?? ""}>{activeProfile?.tabName || "Select tab"}</option>
+                  {activeProfileTabs.filter((tab) => tab.title !== activeProfile?.tabName).map((tab) => (
+                    <option value={tab.title} key={tab.sheetId}>
+                      {tab.title}
+                    </option>
+                  ))}
+                </select>
+              </div>
               <button className="secondary-button compact" type="button" onClick={handleLoadTabs} disabled={isLoadingTabs}>
                 {isLoadingTabs ? "Loading..." : "Fetch"}
               </button>
@@ -1108,15 +1116,15 @@ export default function HomePage() {
 
       <nav className="bottom-nav" aria-label="Main navigation">
         <button className={activeView === "photos" ? "is-active" : ""} type="button" onClick={() => setActiveView("photos")}>
-          <span aria-hidden="true">P</span>
+          <img src="/icons/camera.svg" alt="" aria-hidden="true" />
           <small>Photos</small>
         </button>
         <button className={activeView === "shipping" ? "is-active" : ""} type="button" onClick={() => setActiveView("shipping")}>
-          <span aria-hidden="true">S</span>
+          <img src="/icons/shipping-box.svg" alt="" aria-hidden="true" />
           <small>Shipping</small>
         </button>
         <button className={activeView === "settings" ? "is-active" : ""} type="button" onClick={() => setActiveView("settings")}>
-          <span aria-hidden="true">*</span>
+          <img src="/icons/settings.svg" alt="" aria-hidden="true" />
           <small>Settings</small>
         </button>
       </nav>

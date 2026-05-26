@@ -301,8 +301,20 @@ select:focus {
   padding: 10px 14px;
 }
 
+.sheet-strip-name {
+  grid-template-columns: 28px minmax(0, 1fr);
+}
+
 .sheet-strip-name:first-child {
   border-right: 1px solid var(--border);
+}
+
+.sheet-strip-icon {
+  grid-row: 1 / 3;
+  align-self: center;
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
 }
 
 .sheet-strip span,
@@ -352,6 +364,26 @@ select:focus {
   display: grid;
   grid-template-columns: 1fr auto;
   gap: 8px;
+}
+
+.icon-field {
+  position: relative;
+}
+
+.icon-field img {
+  position: absolute;
+  left: 13px;
+  top: 50%;
+  width: 22px;
+  height: 22px;
+  object-fit: contain;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.icon-field select,
+.icon-field input {
+  padding-left: 44px;
 }
 
 .scan-button {
@@ -594,9 +626,11 @@ select:focus {
   border-right: 0;
 }
 
-.bottom-nav span {
-  font-size: 1.28rem;
-  line-height: 1;
+.bottom-nav img {
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
+  opacity: 0.76;
 }
 
 .bottom-nav small {
@@ -607,6 +641,11 @@ select:focus {
 .bottom-nav button.is-active {
   color: #ffffff;
   background: var(--primary);
+}
+
+.bottom-nav button.is-active img {
+  filter: brightness(0) invert(1);
+  opacity: 1;
 }
 
 @media (min-width: 680px) {
