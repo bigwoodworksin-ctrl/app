@@ -312,13 +312,6 @@ select:focus {
   pointer-events: none;
 }
 
-.status-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-  margin: 14px 0;
-}
-
 .dispatch-link {
   margin-bottom: 12px;
 }

@@ -57,7 +57,7 @@ const SHEET_PROFILES_KEY = "order-photo-manager-sheet-profiles";
 const ACTIVE_PROFILE_KEY = "order-photo-manager-active-profile";
 const SEARCH_DELAY_MS = 300;
 const MAX_PHOTOS_PER_UPLOAD = 3;
-const SHIPPING_STATUSES = ["Packed", "Dispatched", "In Transit", "Delivered", "Failed", "On Hold"];
+const SHIPPING_STATUSES = ["Packed", "Dispatched", "Delivered", "Shipment On Hold", "In Transit", "Failed", "Clearance Event"];
 
 function friendlyStatus(status: string): string {
   return status.trim() || "No status";
@@ -737,7 +737,9 @@ export default function HomePage() {
       ) : null}
       <header className="top-bar">
         <div>
-          <p className="eyebrow">{activeView === "settings" ? "Settings" : activeProfile?.name ?? "Default Sheet"}</p>
+          <p className="eyebrow">
+            {activeView === "settings" ? "Settings" : `Current sheet: ${activeProfile?.name ?? "Default Sheet"}`}
+          </p>
           <h1>
             {activeView === "photos"
               ? "Order Photos"
@@ -792,12 +794,6 @@ export default function HomePage() {
           <span>{`${rows.length} order${rows.length === 1 ? "" : "s"} shown`}</span>
           {isSearching ? <span>Searching...</span> : null}
         </div>
-        <button className="secondary-button" type="button" onClick={handleSheetCheck} disabled={isCheckingSheet}>
-          {isCheckingSheet ? "Checking Sheet..." : "Sheet Check"}
-        </button>
-        <button className="secondary-button" type="button" onClick={handleCloudinaryCheck} disabled={isCheckingCloudinary}>
-          {isCheckingCloudinary ? "Checking Cloudinary..." : "Cloudinary Check"}
-        </button>
       </section>
 
       {error ? <p className="error-message">{error}</p> : null}
@@ -924,18 +920,21 @@ export default function HomePage() {
               </div>
               <p className="personalization">{shippingRow.personalization || shippingRow.trackingId}</p>
               <p className="muted">Tracking: {shippingRow.trackingId}</p>
-              <div className="status-grid">
-                {SHIPPING_STATUSES.map((status) => (
-                  <button
-                    className="secondary-button"
-                    type="button"
-                    key={status}
-                    disabled={isUpdatingStatus}
-                    onClick={() => handleStatusUpdate(status)}
-                  >
-                    {status}
-                  </button>
-                ))}
+              <div className="field-row">
+                <label htmlFor="shipping-status">Carrier / Status</label>
+                <select
+                  id="shipping-status"
+                  value={shippingRow.status || ""}
+                  disabled={isUpdatingStatus}
+                  onChange={(event) => handleStatusUpdate(event.target.value)}
+                >
+                  <option value="">Choose status</option>
+                  {SHIPPING_STATUSES.map((status) => (
+                    <option value={status} key={status}>
+                      {status}
+                    </option>
+                  ))}
+                </select>
               </div>
               {shippingRow.dispatchPhotoLink ? (
                 <a className="photo-link dispatch-link" href={shippingRow.dispatchPhotoLink} target="_blank" rel="noreferrer">
