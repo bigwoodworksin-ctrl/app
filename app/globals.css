@@ -295,6 +295,13 @@ input[type="search"]:focus {
   margin: 0 0 12px;
 }
 
+.photo-link-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  align-items: stretch;
+}
+
 .photo-link {
   display: flex;
   align-items: center;
@@ -313,6 +320,17 @@ input[type="search"]:focus {
   font-size: 0.78rem;
   font-weight: 750;
   text-align: right;
+}
+
+.delete-photo-button {
+  min-width: 84px;
+  border: 1px solid rgba(164, 63, 50, 0.28);
+  border-radius: 8px;
+  padding: 0 10px;
+  color: var(--danger);
+  background: #fff0ed;
+  font-size: 0.84rem;
+  font-weight: 850;
 }
 
 .file-button {

@@ -11,7 +11,8 @@ A mobile-first Next.js PWA for searching Google Sheet orders by the `Personaliza
 - Camera-friendly `Add Photo` flow with browser JPEG compression
 - Up to 3 images can be uploaded at once for the same order
 - Cloudinary image upload with public secure image URLs
-- Timestamped photo entries are appended to the `Photo Link` cell instead of replacing older links
+- Photos are stored across `Photo Link`, `Photo Link 2`, and `Photo Link 3`
+- Uploaded photos can be deleted from the app, which removes the Cloudinary asset and clears the Sheet slot
 - Google Sheets update to the matching row
 - In-memory Sheet cache for fast repeated searches
 - Installable PWA with manifest and service worker
@@ -24,7 +25,7 @@ The configured tab must include these headers somewhere in the first 10 rows:
 - `Carrier / Status` or `Carrier`
 - `Personalization`
 
-You can add more columns anywhere. The app finds required columns by header name.
+You can add more columns anywhere. The app finds required columns by header name. If `Photo Link 2` or `Photo Link 3` are missing, the app adds those headers automatically.
 
 ## Environment Variables
 
@@ -171,7 +172,14 @@ Returns:
 {
   "success": true,
   "imageUrl": "https://res.cloudinary.com/your-cloud-name/image/upload/...",
-  "photoLink": "Photo 1 26May2026143022: https://res.cloudinary.com/your-cloud-name/image/upload/...",
+  "photoLinks": [
+    {
+      "slot": 1,
+      "header": "Photo Link",
+      "label": "Photo 1",
+      "url": "https://res.cloudinary.com/your-cloud-name/image/upload/..."
+    }
+  ],
   "rowNumber": 2
 }
 ```
@@ -183,5 +191,6 @@ Returns:
 - Search reads are cached in memory for about 45 seconds.
 - Cache is cleared after a successful photo upload.
 - Search returns up to 100 results.
-- Each upload can include up to 3 images. New links are appended to the existing `Photo Link` cell as a stacked list with timestamp labels and raw clickable URLs.
+- Each row supports up to 3 image links across `Photo Link`, `Photo Link 2`, and `Photo Link 3`.
+- The delete button removes the selected Cloudinary photo and clears its Google Sheets slot.
 - If your spreadsheet title is `Kaleem testscript` but the bottom tab says `Sheet1`, use `Sheet1` for `GOOGLE_SHEET_TAB_NAME`.

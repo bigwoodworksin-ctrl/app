@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireApiAuth } from "@/lib/auth";
 import { buildOrderPhotoFileName, photoTimestamp, uploadImageToCloudinary } from "@/lib/cloudinary";
 import { toClientError } from "@/lib/env";
-import { appendPhotoLinks } from "@/lib/sheets";
+import { getEmptyPhotoSlots, writePhotoSlots } from "@/lib/sheets";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -42,11 +42,13 @@ export async function POST(request: NextRequest) {
       throw new Error("Invalid row number. Please refresh and try again.");
     }
 
-    if (photos.length > 3) {
-      throw new Error("Please upload no more than 3 images at a time.");
+    const emptySlots = await getEmptyPhotoSlots(rowNumber);
+
+    if (photos.length > emptySlots.length) {
+      throw new Error(`Only ${emptySlots.length} photo slot${emptySlots.length === 1 ? "" : "s"} available for this row.`);
     }
 
-    const uploadedPhotos: Array<{ timestamp: string; imageUrl: string }> = [];
+    const uploadedPhotos: Array<{ slot: 1 | 2 | 3; imageUrl: string }> = [];
 
     for (const [index, photo] of photos.entries()) {
       const fileName = photo.fileName?.trim() || "order-photo.jpg";
@@ -62,14 +64,20 @@ export async function POST(request: NextRequest) {
       }
 
       const timestamp = photoTimestamp();
+      const slot = emptySlots[index];
+
+      if (!slot) {
+        throw new Error("No empty photo slot is available for this upload.");
+      }
+
       const cloudinaryFileName = buildOrderPhotoFileName(personalization, fileName, index + 1, timestamp);
       const imageUrl = await uploadImageToCloudinary({ fileName: cloudinaryFileName, mimeType, base64Image });
-      uploadedPhotos.push({ timestamp, imageUrl });
+      uploadedPhotos.push({ slot, imageUrl });
     }
 
-    const photoLink = await appendPhotoLinks(rowNumber, uploadedPhotos);
+    const photoLinks = await writePhotoSlots(rowNumber, uploadedPhotos);
 
-    return NextResponse.json({ success: true, imageUrl: uploadedPhotos[0]?.imageUrl, photoLink, rowNumber });
+    return NextResponse.json({ success: true, imageUrl: uploadedPhotos[0]?.imageUrl, photoLinks, rowNumber });
   } catch (error) {
     const message = toClientError(error);
     const status = message.toLowerCase().includes("unauthorized") ? 401 : 500;

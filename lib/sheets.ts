@@ -2,20 +2,28 @@ import { getAppEnv } from "./env";
 import { getSheetsClient } from "./google";
 
 const REQUIRED_COLUMNS = ["Photo Link", "Carrier / Status", "Personalization"] as const;
+const PHOTO_COLUMNS = ["Photo Link", "Photo Link 2", "Photo Link 3"] as const;
 const COLUMN_ALIASES: Record<(typeof REQUIRED_COLUMNS)[number], string[]> = {
   "Photo Link": ["Photo Link", "Photo", "Image Link"],
   "Carrier / Status": ["Carrier / Status", "Carrier", "Status", "Carrier Status"],
   Personalization: ["Personalization", "Personalisation", "Personalized", "Personalized Text"]
 };
 const CACHE_TTL_MS = 45_000;
-const PHOTO_ENTRY_SEPARATOR = "\n\n";
 
 export type SheetRow = {
   rowNumber: number;
   photoLink: string;
+  photoLinks: PhotoSlot[];
   status: string;
   personalization: string;
   priority: 1 | 2;
+};
+
+export type PhotoSlot = {
+  slot: 1 | 2 | 3;
+  header: string;
+  label: string;
+  url: string;
 };
 
 type SheetCache = {
@@ -66,43 +74,14 @@ function columnLetter(index: number): string {
   return column;
 }
 
-function extractPhotoEntries(value: string): string[] {
+function extractPhotoUrls(value: string): string[] {
   const formulaMatches = Array.from(value.matchAll(/HYPERLINK\("([^"]+)","([^"]+)"\)/g));
 
   if (formulaMatches.length > 0) {
-    return formulaMatches.map((match) => `${match[2]}: ${match[1]}`);
+    return formulaMatches.map((match) => match[1]);
   }
 
-  const urlMatches = Array.from(value.matchAll(/https?:\/\/\S+/g));
-
-  if (urlMatches.length > 0) {
-    return urlMatches.map((match, index) => {
-      const url = match[0];
-      const beforeUrl = value.slice(0, match.index).split(/\r?\n|\s+\|\s+/).pop()?.trim();
-      const label = beforeUrl && !beforeUrl.startsWith("http") ? beforeUrl.replace(/[:|-]\s*$/, "") : `Photo ${index + 1}`;
-
-      return `${label}: ${url}`;
-    });
-  }
-
-  return value.split(/\r?\n|\s+\|\s+/).map((entry) => entry.trim()).filter(Boolean);
-}
-
-function formatPhotoEntriesForCell(entries: string[]): string {
-  return entries
-    .map((entry, index) => {
-      const match = entry.match(/^(.*?)(?:\s+-\s+|:\s*)(https?:\/\/\S+)$/);
-
-      if (!match) {
-        return entry;
-      }
-
-      const label = match[1].trim() || `Photo ${index + 1}`;
-      const url = match[2];
-
-      return `${label}\n${url}`;
-    })
-    .join(PHOTO_ENTRY_SEPARATOR);
+  return Array.from(value.matchAll(/https?:\/\/\S+/g)).map((match) => match[0]);
 }
 
 function findColumn(headers: string[], name: (typeof REQUIRED_COLUMNS)[number]): number {
@@ -116,6 +95,56 @@ function findColumn(headers: string[], name: (typeof REQUIRED_COLUMNS)[number]):
   }
 
   return index;
+}
+
+function findPhotoColumn(headers: string[], slot: 1 | 2 | 3): number {
+  const header = PHOTO_COLUMNS[slot - 1];
+  const aliases = slot === 1 ? COLUMN_ALIASES["Photo Link"] : [header];
+  const normalizedAliases = aliases.map(normalizeHeader);
+
+  return headers.findIndex((value) => normalizedAliases.includes(normalizeHeader(value)));
+}
+
+function getPhotoColumnIndexes(headers: string[]): number[] {
+  return PHOTO_COLUMNS.map((_, index) => findPhotoColumn(headers, (index + 1) as 1 | 2 | 3));
+}
+
+async function ensurePhotoColumns(headers: string[], headerRowNumber: number): Promise<string[]> {
+  const env = getAppEnv();
+  const missingHeaders = PHOTO_COLUMNS.filter((_, index) => findPhotoColumn(headers, (index + 1) as 1 | 2 | 3) === -1);
+
+  if (missingHeaders.length === 0) {
+    return headers;
+  }
+
+  const sheets = getSheetsClient();
+  const nextHeaders = [...headers];
+  const updates = [];
+
+  for (const header of missingHeaders) {
+    const targetIndex = nextHeaders.length;
+    nextHeaders[targetIndex] = header;
+    updates.push({
+      range: `${quoteSheetName(env.GOOGLE_SHEET_TAB_NAME)}!${columnLetter(targetIndex)}${headerRowNumber}`,
+      values: [[header]]
+    });
+  }
+
+  try {
+    await sheets.spreadsheets.values.batchUpdate({
+      spreadsheetId: env.GOOGLE_SHEET_ID,
+      requestBody: {
+        valueInputOption: "RAW",
+        data: updates
+      }
+    });
+  } catch (error) {
+    throw new Error(
+      `Google Sheets header update failed: ${googleApiMessage(error)}. Share the spreadsheet with ${env.GOOGLE_SERVICE_ACCOUNT_EMAIL} as Editor.`
+    );
+  }
+
+  return nextHeaders;
 }
 
 function findHeaderRow(values: string[][]): { headers: string[]; headerRowIndex: number } {
@@ -216,10 +245,11 @@ async function readSheetValues(): Promise<SheetCache> {
   }
 
   const { headers, headerRowIndex } = findHeaderRow(values);
+  const finalHeaders = await ensurePhotoColumns(headers, headerRowIndex + 1);
 
   cache = {
     expiresAt: Date.now() + CACHE_TTL_MS,
-    headers,
+    headers: finalHeaders,
     headerRowNumber: headerRowIndex + 1,
     sheetId: activeTab.sheetId,
     rows: values.slice(headerRowIndex + 1)
@@ -234,7 +264,7 @@ export function clearSheetCache() {
 
 export async function searchSheetRows(query: string, limit = 100): Promise<SheetRow[]> {
   const { headers, headerRowNumber, rows } = await readSheetValues();
-  const photoIndex = findColumn(headers, "Photo Link");
+  const photoIndexes = getPhotoColumnIndexes(headers);
   const statusIndex = findColumn(headers, "Carrier / Status");
   const personalizationIndex = findColumn(headers, "Personalization");
   const normalizedQuery = query.trim().toLowerCase();
@@ -243,9 +273,23 @@ export async function searchSheetRows(query: string, limit = 100): Promise<Sheet
     .map((row, index) => {
       const status = row[statusIndex] ?? "";
 
+      const photoLinks = photoIndexes
+        .map((photoIndex, photoIndexPosition) => {
+          const url = photoIndex >= 0 ? extractPhotoUrls(row[photoIndex] ?? "")[0] ?? "" : "";
+
+          return {
+            slot: (photoIndexPosition + 1) as 1 | 2 | 3,
+            header: PHOTO_COLUMNS[photoIndexPosition],
+            label: `Photo ${photoIndexPosition + 1}`,
+            url
+          };
+        })
+        .filter((photo) => photo.url);
+
       return {
         rowNumber: headerRowNumber + index + 1,
-        photoLink: row[photoIndex] ?? "",
+        photoLink: photoLinks.map((photo) => photo.url).join("\n"),
+        photoLinks,
         status,
         personalization: row[personalizationIndex] ?? "",
         priority: getPriority(status)
@@ -276,10 +320,47 @@ export async function getSheetDiagnostics() {
   };
 }
 
-export async function appendPhotoLinks(
+async function readRowValues(rowNumber: number): Promise<string[]> {
+  const env = getAppEnv();
+  const sheets = getSheetsClient();
+
+  try {
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId: env.GOOGLE_SHEET_ID,
+      range: `${quoteSheetName(env.GOOGLE_SHEET_TAB_NAME)}!A${rowNumber}:ZZ${rowNumber}`,
+      valueRenderOption: "FORMULA"
+    });
+
+    return (response.data.values?.[0] ?? []).map(String);
+  } catch (error) {
+    throw new Error(
+      `Google Sheets row read failed: ${googleApiMessage(error)}. Share the spreadsheet with ${env.GOOGLE_SERVICE_ACCOUNT_EMAIL} as Editor.`
+    );
+  }
+}
+
+export async function getEmptyPhotoSlots(rowNumber: number): Promise<Array<1 | 2 | 3>> {
+  if (!Number.isInteger(rowNumber) || rowNumber < 1) {
+    throw new Error("Invalid row number. Expected a data row from the Google Sheet.");
+  }
+
+  const { headers } = await readSheetValues();
+  const photoIndexes = getPhotoColumnIndexes(headers);
+  const row = await readRowValues(rowNumber);
+
+  return photoIndexes
+    .map((photoIndex, index) => ({
+      slot: (index + 1) as 1 | 2 | 3,
+      value: photoIndex >= 0 ? row[photoIndex] ?? "" : ""
+    }))
+    .filter((photo) => extractPhotoUrls(photo.value).length === 0 && !photo.value.trim())
+    .map((photo) => photo.slot);
+}
+
+export async function writePhotoSlots(
   rowNumber: number,
-  photos: Array<{ timestamp: string; imageUrl: string }>
-): Promise<string> {
+  photos: Array<{ slot: 1 | 2 | 3; imageUrl: string }>
+): Promise<PhotoSlot[]> {
   if (!Number.isInteger(rowNumber) || rowNumber < 1) {
     throw new Error("Invalid row number. Expected a data row from the Google Sheet.");
   }
@@ -290,36 +371,27 @@ export async function appendPhotoLinks(
 
   const env = getAppEnv();
   const { headers, sheetId } = await readSheetValues();
-  const photoIndex = findColumn(headers, "Photo Link");
+  const photoIndexes = getPhotoColumnIndexes(headers);
   const sheets = getSheetsClient();
-  const targetCell = `${columnLetter(photoIndex)}${rowNumber}`;
-  let existingValue = "";
+  const data = photos.map((photo) => {
+    const columnIndex = photoIndexes[photo.slot - 1];
+
+    if (columnIndex === -1) {
+      throw new Error(`Missing column for Photo Link ${photo.slot}.`);
+    }
+
+    return {
+      range: `${quoteSheetName(env.GOOGLE_SHEET_TAB_NAME)}!${columnLetter(columnIndex)}${rowNumber}`,
+      values: [[photo.imageUrl]]
+    };
+  });
 
   try {
-    const existing = await sheets.spreadsheets.values.get({
+    await sheets.spreadsheets.values.batchUpdate({
       spreadsheetId: env.GOOGLE_SHEET_ID,
-      range: `${quoteSheetName(env.GOOGLE_SHEET_TAB_NAME)}!${targetCell}`,
-      valueRenderOption: "FORMULA"
-    });
-    existingValue = String(existing.data.values?.[0]?.[0] ?? "").trim();
-  } catch (error) {
-    throw new Error(
-      `Google Sheets read failed before photo update: ${googleApiMessage(error)}. Share the spreadsheet with ${env.GOOGLE_SERVICE_ACCOUNT_EMAIL} as Editor.`
-    );
-  }
-
-  const newEntries = photos.map((photo, index) => `Photo ${index + 1} ${photo.timestamp}: ${photo.imageUrl}`);
-  const existingEntries = extractPhotoEntries(existingValue);
-  const updatedEntries = [...existingEntries, ...newEntries];
-  const updatedValue = formatPhotoEntriesForCell(updatedEntries);
-
-  try {
-    await sheets.spreadsheets.values.update({
-      spreadsheetId: env.GOOGLE_SHEET_ID,
-      range: `${quoteSheetName(env.GOOGLE_SHEET_TAB_NAME)}!${targetCell}`,
-      valueInputOption: "USER_ENTERED",
       requestBody: {
-        values: [[updatedValue]]
+        valueInputOption: "USER_ENTERED",
+        data
       }
     });
 
@@ -333,12 +405,12 @@ export async function appendPhotoLinks(
                 sheetId,
                 startRowIndex: rowNumber - 1,
                 endRowIndex: rowNumber,
-                startColumnIndex: photoIndex,
-                endColumnIndex: photoIndex + 1
+                startColumnIndex: Math.min(...photos.map((photo) => photoIndexes[photo.slot - 1])),
+                endColumnIndex: Math.max(...photos.map((photo) => photoIndexes[photo.slot - 1])) + 1
               },
               cell: {
                 userEnteredFormat: {
-                  wrapStrategy: "WRAP"
+                  wrapStrategy: "CLIP"
                 }
               },
               fields: "userEnteredFormat.wrapStrategy"
@@ -354,5 +426,42 @@ export async function appendPhotoLinks(
   }
 
   clearSheetCache();
-  return updatedValue;
+
+  return photos.map((photo) => ({
+    slot: photo.slot,
+    header: PHOTO_COLUMNS[photo.slot - 1],
+    label: `Photo ${photo.slot}`,
+    url: photo.imageUrl
+  }));
+}
+
+export async function clearPhotoSlot(rowNumber: number, slot: 1 | 2 | 3): Promise<void> {
+  if (!Number.isInteger(rowNumber) || rowNumber < 1) {
+    throw new Error("Invalid row number. Expected a data row from the Google Sheet.");
+  }
+
+  if (![1, 2, 3].includes(slot)) {
+    throw new Error("Invalid photo slot.");
+  }
+
+  const env = getAppEnv();
+  const { headers } = await readSheetValues();
+  const photoIndex = getPhotoColumnIndexes(headers)[slot - 1];
+
+  if (photoIndex === -1) {
+    throw new Error(`Missing column for Photo Link ${slot}.`);
+  }
+
+  try {
+    await getSheetsClient().spreadsheets.values.clear({
+      spreadsheetId: env.GOOGLE_SHEET_ID,
+      range: `${quoteSheetName(env.GOOGLE_SHEET_TAB_NAME)}!${columnLetter(photoIndex)}${rowNumber}`
+    });
+  } catch (error) {
+    throw new Error(
+      `Google Sheets photo delete failed: ${googleApiMessage(error)}. Share the spreadsheet with ${env.GOOGLE_SERVICE_ACCOUNT_EMAIL} as Editor.`
+    );
+  }
+
+  clearSheetCache();
 }

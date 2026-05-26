@@ -8,9 +8,17 @@ import { compressImage } from "@/lib/image";
 type SearchRow = {
   rowNumber: number;
   photoLink: string;
+  photoLinks: PhotoSlot[];
   status: string;
   personalization: string;
   priority: 1 | 2;
+};
+
+type PhotoSlot = {
+  slot: 1 | 2 | 3;
+  header: string;
+  label: string;
+  url: string;
 };
 
 type Diagnostics = {
@@ -37,11 +45,13 @@ function friendlyStatus(status: string): string {
   return status.trim() || "No status";
 }
 
-function parsePhotoLinks(photoLink: string): Array<{ label: string; url: string }> {
+function parsePhotoLinks(photoLink: string): PhotoSlot[] {
   const formulaMatches = Array.from(photoLink.matchAll(/HYPERLINK\("([^"]+)","([^"]+)"\)/g));
 
   if (formulaMatches.length > 0) {
-    return formulaMatches.map((match) => ({
+    return formulaMatches.slice(0, 3).map((match, index) => ({
+      slot: (index + 1) as 1 | 2 | 3,
+      header: `Photo Link ${index + 1}`,
       label: match[2],
       url: match[1]
     }));
@@ -50,12 +60,14 @@ function parsePhotoLinks(photoLink: string): Array<{ label: string; url: string 
   const urlMatches = Array.from(photoLink.matchAll(/https?:\/\/\S+/g));
 
   if (urlMatches.length > 0) {
-    return urlMatches.map((match, index) => {
+    return urlMatches.slice(0, 3).map((match, index) => {
       const url = match[0];
       const beforeUrl = photoLink.slice(0, match.index).split(/\r?\n|\s+\|\s+/).pop()?.trim();
       const label = beforeUrl && !beforeUrl.startsWith("http") ? beforeUrl.replace(/[:|-]\s*$/, "") : `Photo ${index + 1}`;
 
       return {
+        slot: (index + 1) as 1 | 2 | 3,
+        header: `Photo Link ${index + 1}`,
         label,
         url
       };
@@ -66,10 +78,17 @@ function parsePhotoLinks(photoLink: string): Array<{ label: string; url: string 
     .split(/\r?\n|\s+\|\s+/)
     .map((line) => line.trim())
     .filter(Boolean)
+    .slice(0, 3)
     .map((line, index) => ({
+      slot: (index + 1) as 1 | 2 | 3,
+      header: `Photo Link ${index + 1}`,
       label: `Photo ${index + 1}`,
       url: line
     }));
+}
+
+function getRowPhotoLinks(row: SearchRow): PhotoSlot[] {
+  return row.photoLinks?.length ? row.photoLinks : parsePhotoLinks(row.photoLink);
 }
 
 export default function HomePage() {
@@ -80,6 +99,7 @@ export default function HomePage() {
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
   const [uploadingRow, setUploadingRow] = useState<number | null>(null);
+  const [deletingPhoto, setDeletingPhoto] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [diagnostics, setDiagnostics] = useState<Diagnostics | null>(null);
   const [cloudinaryDiagnostics, setCloudinaryDiagnostics] = useState<CloudinaryDiagnostics | null>(null);
@@ -259,21 +279,84 @@ export default function HomePage() {
           photos
         })
       });
-      const data = (await response.json()) as { success?: boolean; photoLink?: string; error?: string };
+      const data = (await response.json()) as { success?: boolean; photoLinks?: PhotoSlot[]; error?: string };
 
-      if (!response.ok || !data.success || !data.photoLink) {
+      if (!response.ok || !data.success || !data.photoLinks) {
         throw new Error(data.error ?? "Photo upload failed.");
       }
 
+      const uploadedLinks = data.photoLinks;
+
       setRows((currentRows) =>
         currentRows.map((currentRow) =>
-          currentRow.rowNumber === row.rowNumber ? { ...currentRow, photoLink: data.photoLink ?? "" } : currentRow
+          currentRow.rowNumber === row.rowNumber
+            ? {
+                ...currentRow,
+                photoLinks: [...getRowPhotoLinks(currentRow).filter((photo) => !uploadedLinks.some((newPhoto) => newPhoto.slot === photo.slot)), ...uploadedLinks].sort(
+                  (left, right) => left.slot - right.slot
+                ),
+                photoLink: [...getRowPhotoLinks(currentRow).filter((photo) => !uploadedLinks.some((newPhoto) => newPhoto.slot === photo.slot)), ...uploadedLinks]
+                  .sort((left, right) => left.slot - right.slot)
+                  .map((photo) => photo.url)
+                  .join("\n")
+              }
+            : currentRow
         )
       );
     } catch (uploadError) {
       setError((uploadError as Error).message);
     } finally {
       setUploadingRow(null);
+    }
+  }
+
+  async function handleDeletePhoto(row: SearchRow, photo: PhotoSlot) {
+    if (!token) {
+      return;
+    }
+
+    const deleteKey = `${row.rowNumber}-${photo.slot}`;
+    setDeletingPhoto(deleteKey);
+    setError("");
+
+    try {
+      const response = await fetch("/api/delete-photo", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-app-token": token
+        },
+        body: JSON.stringify({
+          rowNumber: row.rowNumber,
+          slot: photo.slot,
+          imageUrl: photo.url
+        })
+      });
+      const data = (await response.json()) as { success?: boolean; error?: string };
+
+      if (!response.ok || !data.success) {
+        throw new Error(data.error ?? "Photo delete failed.");
+      }
+
+      setRows((currentRows) =>
+        currentRows.map((currentRow) => {
+          if (currentRow.rowNumber !== row.rowNumber) {
+            return currentRow;
+          }
+
+          const nextLinks = getRowPhotoLinks(currentRow).filter((currentPhoto) => currentPhoto.slot !== photo.slot);
+
+          return {
+            ...currentRow,
+            photoLinks: nextLinks,
+            photoLink: nextLinks.map((currentPhoto) => currentPhoto.url).join("\n")
+          };
+        })
+      );
+    } catch (deleteError) {
+      setError((deleteError as Error).message);
+    } finally {
+      setDeletingPhoto(null);
     }
   }
 
@@ -398,19 +481,23 @@ export default function HomePage() {
 
             <p className="personalization">{row.personalization || "No personalization text"}</p>
 
-            {parsePhotoLinks(row.photoLink).length > 0 ? (
+            {getRowPhotoLinks(row).length > 0 ? (
               <div className="photo-links">
-                {parsePhotoLinks(row.photoLink).map((photo, index) => (
-                  <a
-                    className="photo-link"
-                    href={photo.url}
-                    target="_blank"
-                    rel="noreferrer"
-                    key={`${photo.url}-${index}`}
-                  >
-                    Open Photo {index + 1}
-                    <span>{photo.label}</span>
-                  </a>
+                {getRowPhotoLinks(row).map((photo) => (
+                  <div className="photo-link-row" key={`${row.rowNumber}-${photo.slot}-${photo.url}`}>
+                    <a className="photo-link" href={photo.url} target="_blank" rel="noreferrer">
+                      Open Photo {photo.slot}
+                      <span>{photo.label}</span>
+                    </a>
+                    <button
+                      className="delete-photo-button"
+                      type="button"
+                      onClick={() => handleDeletePhoto(row, photo)}
+                      disabled={deletingPhoto === `${row.rowNumber}-${photo.slot}` || uploadingRow !== null}
+                    >
+                      {deletingPhoto === `${row.rowNumber}-${photo.slot}` ? "Deleting..." : "Delete"}
+                    </button>
+                  </div>
                 ))}
               </div>
             ) : (
