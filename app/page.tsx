@@ -47,25 +47,29 @@ function parsePhotoLinks(photoLink: string): Array<{ label: string; url: string 
     }));
   }
 
+  const urlMatches = Array.from(photoLink.matchAll(/https?:\/\/\S+/g));
+
+  if (urlMatches.length > 0) {
+    return urlMatches.map((match, index) => {
+      const url = match[0];
+      const beforeUrl = photoLink.slice(0, match.index).split(/\r?\n|\s+\|\s+/).pop()?.trim();
+      const label = beforeUrl && !beforeUrl.startsWith("http") ? beforeUrl.replace(/[:|-]\s*$/, "") : `Photo ${index + 1}`;
+
+      return {
+        label,
+        url
+      };
+    });
+  }
+
   return photoLink
     .split(/\r?\n|\s+\|\s+/)
     .map((line) => line.trim())
     .filter(Boolean)
-    .map((line, index) => {
-      const match = line.match(/^(.*?)(?:\s+-\s+|:\s*)(https?:\/\/\S+)$/);
-
-      if (match) {
-        return {
-          label: match[1],
-          url: match[2]
-        };
-      }
-
-      return {
-        label: `Photo ${index + 1}`,
-        url: line
-      };
-    });
+    .map((line, index) => ({
+      label: `Photo ${index + 1}`,
+      url: line
+    }));
 }
 
 export default function HomePage() {

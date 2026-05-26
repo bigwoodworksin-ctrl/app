@@ -8,7 +8,7 @@ const COLUMN_ALIASES: Record<(typeof REQUIRED_COLUMNS)[number], string[]> = {
   Personalization: ["Personalization", "Personalisation", "Personalized", "Personalized Text"]
 };
 const CACHE_TTL_MS = 45_000;
-const PHOTO_ENTRY_SEPARATOR = " | ";
+const PHOTO_ENTRY_SEPARATOR = "\n\n";
 
 export type SheetRow = {
   rowNumber: number;
@@ -22,6 +22,7 @@ type SheetCache = {
   expiresAt: number;
   headers: string[];
   headerRowNumber: number;
+  sheetId: number;
   rows: string[][];
 };
 
@@ -65,27 +66,6 @@ function columnLetter(index: number): string {
   return column;
 }
 
-function escapeFormulaText(value: string): string {
-  return value.replace(/"/g, "\"\"");
-}
-
-function photoEntriesToFormula(entries: string[]): string {
-  const parts = entries.map((entry, index) => {
-    const match = entry.match(/^(.*?)(?:\s+-\s+|:\s*)(https?:\/\/\S+)$/);
-
-    if (!match) {
-      return `"${escapeFormulaText(entry)}"`;
-    }
-
-    const label = match[1].trim() || `Photo ${index + 1}`;
-    const url = match[2];
-
-    return `HYPERLINK("${escapeFormulaText(url)}","${escapeFormulaText(label)}")`;
-  });
-
-  return `=${parts.join(' & " | " & ')}`;
-}
-
 function extractPhotoEntries(value: string): string[] {
   const formulaMatches = Array.from(value.matchAll(/HYPERLINK\("([^"]+)","([^"]+)"\)/g));
 
@@ -93,10 +73,36 @@ function extractPhotoEntries(value: string): string[] {
     return formulaMatches.map((match) => `${match[2]}: ${match[1]}`);
   }
 
-  return value
-    .split(/\r?\n|\s+\|\s+/)
-    .map((entry) => entry.trim())
-    .filter(Boolean);
+  const urlMatches = Array.from(value.matchAll(/https?:\/\/\S+/g));
+
+  if (urlMatches.length > 0) {
+    return urlMatches.map((match, index) => {
+      const url = match[0];
+      const beforeUrl = value.slice(0, match.index).split(/\r?\n|\s+\|\s+/).pop()?.trim();
+      const label = beforeUrl && !beforeUrl.startsWith("http") ? beforeUrl.replace(/[:|-]\s*$/, "") : `Photo ${index + 1}`;
+
+      return `${label}: ${url}`;
+    });
+  }
+
+  return value.split(/\r?\n|\s+\|\s+/).map((entry) => entry.trim()).filter(Boolean);
+}
+
+function formatPhotoEntriesForCell(entries: string[]): string {
+  return entries
+    .map((entry, index) => {
+      const match = entry.match(/^(.*?)(?:\s+-\s+|:\s*)(https?:\/\/\S+)$/);
+
+      if (!match) {
+        return entry;
+      }
+
+      const label = match[1].trim() || `Photo ${index + 1}`;
+      const url = match[2];
+
+      return `${label}\n${url}`;
+    })
+    .join(PHOTO_ENTRY_SEPARATOR);
 }
 
 function findColumn(headers: string[], name: (typeof REQUIRED_COLUMNS)[number]): number {
@@ -145,7 +151,7 @@ function getPriority(status: string): 1 | 2 {
   return normalized.includes("delivered") || normalized.includes("dispatched") ? 2 : 1;
 }
 
-async function getAvailableTabNames(): Promise<string[]> {
+async function getAvailableTabs(): Promise<Array<{ title: string; sheetId: number }>> {
   const env = getAppEnv();
   const sheets = getSheetsClient();
   let response;
@@ -153,7 +159,7 @@ async function getAvailableTabNames(): Promise<string[]> {
   try {
     response = await sheets.spreadsheets.get({
       spreadsheetId: env.GOOGLE_SHEET_ID,
-      fields: "sheets.properties.title"
+      fields: "sheets.properties(sheetId,title)"
     });
   } catch (error) {
     throw new Error(
@@ -163,8 +169,11 @@ async function getAvailableTabNames(): Promise<string[]> {
 
   return (
     response.data.sheets
-      ?.map((sheet) => sheet.properties?.title)
-      .filter((title): title is string => Boolean(title)) ?? []
+      ?.map((sheet) => ({
+        title: sheet.properties?.title ?? "",
+        sheetId: sheet.properties?.sheetId ?? 0
+      }))
+      .filter((sheet) => Boolean(sheet.title)) ?? []
   );
 }
 
@@ -175,12 +184,13 @@ async function readSheetValues(): Promise<SheetCache> {
 
   const env = getAppEnv();
   const sheets = getSheetsClient();
-  const availableTabs = await getAvailableTabNames();
+  const availableTabs = await getAvailableTabs();
+  const activeTab = availableTabs.find((tab) => tab.title === env.GOOGLE_SHEET_TAB_NAME);
 
-  if (!availableTabs.includes(env.GOOGLE_SHEET_TAB_NAME)) {
+  if (!activeTab) {
     throw new Error(
       `Google Sheet tab "${env.GOOGLE_SHEET_TAB_NAME}" was not found. Available tabs: ${
-        availableTabs.join(", ") || "none"
+        availableTabs.map((tab) => tab.title).join(", ") || "none"
       }. Use the exact tab name shown at the bottom of the spreadsheet.`
     );
   }
@@ -211,6 +221,7 @@ async function readSheetValues(): Promise<SheetCache> {
     expiresAt: Date.now() + CACHE_TTL_MS,
     headers,
     headerRowNumber: headerRowIndex + 1,
+    sheetId: activeTab.sheetId,
     rows: values.slice(headerRowIndex + 1)
   };
 
@@ -278,7 +289,7 @@ export async function appendPhotoLinks(
   }
 
   const env = getAppEnv();
-  const { headers } = await readSheetValues();
+  const { headers, sheetId } = await readSheetValues();
   const photoIndex = findColumn(headers, "Photo Link");
   const sheets = getSheetsClient();
   const targetCell = `${columnLetter(photoIndex)}${rowNumber}`;
@@ -300,8 +311,7 @@ export async function appendPhotoLinks(
   const newEntries = photos.map((photo, index) => `Photo ${index + 1} ${photo.timestamp}: ${photo.imageUrl}`);
   const existingEntries = extractPhotoEntries(existingValue);
   const updatedEntries = [...existingEntries, ...newEntries];
-  const updatedValue = updatedEntries.join(PHOTO_ENTRY_SEPARATOR);
-  const formulaValue = photoEntriesToFormula(updatedEntries);
+  const updatedValue = formatPhotoEntriesForCell(updatedEntries);
 
   try {
     await sheets.spreadsheets.values.update({
@@ -309,7 +319,32 @@ export async function appendPhotoLinks(
       range: `${quoteSheetName(env.GOOGLE_SHEET_TAB_NAME)}!${targetCell}`,
       valueInputOption: "USER_ENTERED",
       requestBody: {
-        values: [[formulaValue]]
+        values: [[updatedValue]]
+      }
+    });
+
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId: env.GOOGLE_SHEET_ID,
+      requestBody: {
+        requests: [
+          {
+            repeatCell: {
+              range: {
+                sheetId,
+                startRowIndex: rowNumber - 1,
+                endRowIndex: rowNumber,
+                startColumnIndex: photoIndex,
+                endColumnIndex: photoIndex + 1
+              },
+              cell: {
+                userEnteredFormat: {
+                  wrapStrategy: "WRAP"
+                }
+              },
+              fields: "userEnteredFormat.wrapStrategy"
+            }
+          }
+        ]
       }
     });
   } catch (error) {
