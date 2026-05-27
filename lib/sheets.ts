@@ -133,6 +133,11 @@ function trackingValuesMatch(left: string, right: string): boolean {
   );
 }
 
+function isPhotoSearchTrace(status: string): boolean {
+  const normalized = normalizeHeader(status);
+  return !normalized || normalized === "new";
+}
+
 function columnLetter(index: number): string {
   let dividend = index + 1;
   let column = "";
@@ -461,7 +466,7 @@ export async function searchSheetRows(query: string, limit = 100, target?: Sheet
       };
     })
     .filter((row) => !normalizedQuery || row.personalization.toLowerCase().includes(normalizedQuery))
-    .filter((row) => normalizeHeader(row.status) !== "packed")
+    .filter((row) => isPhotoSearchTrace(row.status))
     .sort((a, b) => a.priority - b.priority || a.rowNumber - b.rowNumber)
     .slice(0, limit);
 }
