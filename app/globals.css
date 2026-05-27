@@ -497,10 +497,23 @@ select:focus {
   position: absolute;
   left: 12px;
   right: 12px;
-  top: 50%;
+  top: 14px;
   height: 2px;
-  transform: translateY(-50%);
   background: rgba(255, 255, 255, 0.76);
+}
+
+.live-scanner.is-scanning .scan-frame::before {
+  animation: scannerLineMove 1.45s ease-in-out infinite alternate;
+}
+
+@keyframes scannerLineMove {
+  from {
+    transform: translateY(0);
+  }
+
+  to {
+    transform: translateY(64px);
+  }
 }
 
 .live-scanner p {

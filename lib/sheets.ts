@@ -165,6 +165,22 @@ function findAliasedColumn(headers: string[], aliases: string[]): number {
   return headers.findIndex((header) => normalizedAliases.includes(normalizeHeader(header)));
 }
 
+function findTrackingColumn(headers: string[]): number {
+  const exactTrackingIndex = headers.findIndex((header) => normalizeHeader(header) === "tracking");
+
+  if (exactTrackingIndex !== -1) {
+    return exactTrackingIndex;
+  }
+
+  const aliasedIndex = findAliasedColumn(headers, TRACKING_ALIASES["Tracking ID"]);
+
+  if (aliasedIndex !== -1) {
+    return aliasedIndex;
+  }
+
+  return headers.findIndex((header) => normalizeHeader(header).includes("tracking"));
+}
+
 function getPhotoColumnIndexes(headers: string[]): number[] {
   return PHOTO_COLUMNS.map((_, index) => findPhotoColumn(headers, (index + 1) as 1 | 2 | 3));
 }
@@ -268,7 +284,7 @@ function findShippingHeaderRow(values: string[][]): { headers: string[]; headerR
 
   for (let index = 0; index < rowsToScan.length; index += 1) {
     const headers = rowsToScan[index].map(String);
-    const hasTracking = findAliasedColumn(headers, TRACKING_ALIASES["Tracking ID"]) !== -1;
+    const hasTracking = findTrackingColumn(headers) !== -1;
 
     if (hasTracking) {
       return { headers, headerRowIndex: index };
@@ -609,7 +625,7 @@ export async function findShippingRowByTracking(trackingId: string, target?: She
   headers = await ensureColumn(headers, headerRowNumber, "Dispatch Photo Link", TRACKING_ALIASES["Dispatch Photo Link"], target);
   clearSheetCache(target);
 
-  const trackingIndex = findAliasedColumn(headers, TRACKING_ALIASES["Tracking ID"]);
+  const trackingIndex = findTrackingColumn(headers);
   const statusIndex = findAliasedColumn(headers, TRACKING_ALIASES["Carrier / Status"]);
   const personalizationIndex = findAliasedColumn(headers, COLUMN_ALIASES.Personalization);
   const dispatchPhotoIndex = findAliasedColumn(headers, TRACKING_ALIASES["Dispatch Photo Link"]);
