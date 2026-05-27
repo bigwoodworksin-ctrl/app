@@ -148,6 +148,8 @@ export default function HomePage() {
   const [uploadingRow, setUploadingRow] = useState<string | null>(null);
   const [uploadingPhotos, setUploadingPhotos] = useState<Record<string, UploadProgress[]>>({});
   const [deletingPhoto, setDeletingPhoto] = useState<string | null>(null);
+  const [engravingConfirmed, setEngravingConfirmed] = useState<Record<string, boolean>>({});
+  const [packingRow, setPackingRow] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [diagnostics, setDiagnostics] = useState<Diagnostics | null>(null);
   const [cloudinaryDiagnostics, setCloudinaryDiagnostics] = useState<CloudinaryDiagnostics | null>(null);
@@ -825,6 +827,54 @@ export default function HomePage() {
     }
   }
 
+  async function handlePackOrder(row: SearchRow) {
+    if (!token) {
+      return;
+    }
+
+    const key = rowUploadKey(row);
+
+    if (!engravingConfirmed[key]) {
+      setError("Check engraving matches with text before submitting.");
+      return;
+    }
+
+    setPackingRow(key);
+    setError("");
+
+    try {
+      const response = await fetch("/api/internal-status", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-app-token": token
+        },
+        body: JSON.stringify(
+          rowTargetBody(row, {
+            rowNumber: row.rowNumber,
+            status: "Packed"
+          })
+        )
+      });
+      const data = (await response.json()) as { success?: boolean; error?: string };
+
+      if (!response.ok || !data.success) {
+        throw new Error(data.error ?? "Could not mark order as packed.");
+      }
+
+      setRows((currentRows) => currentRows.filter((currentRow) => rowUploadKey(currentRow) !== key));
+      setEngravingConfirmed((current) => {
+        const next = { ...current };
+        delete next[key];
+        return next;
+      });
+    } catch (packError) {
+      setError((packError as Error).message);
+    } finally {
+      setPackingRow(null);
+    }
+  }
+
   async function searchTrackingId(trackingId: string) {
     if (!token || !trackingId.trim()) {
       return;
@@ -1291,6 +1341,32 @@ export default function HomePage() {
               <p className="muted">No photo link yet</p>
             )}
 
+            {getRowPhotoLinks(row).length >= 3 ? (
+              <div className="pack-confirm-panel">
+                <label className="pack-checkbox">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(engravingConfirmed[rowUploadKey(row)])}
+                    onChange={(event) =>
+                      setEngravingConfirmed((current) => ({
+                        ...current,
+                        [rowUploadKey(row)]: event.target.checked
+                      }))
+                    }
+                  />
+                  <span>Engraving matches with text</span>
+                </label>
+                <button
+                  className="primary-button"
+                  type="button"
+                  disabled={!engravingConfirmed[rowUploadKey(row)] || packingRow === rowUploadKey(row)}
+                  onClick={() => handlePackOrder(row)}
+                >
+                  {packingRow === rowUploadKey(row) ? "Submitting..." : "Submit"}
+                </button>
+              </div>
+            ) : null}
+
             {(uploadingPhotos[rowUploadKey(row)] ?? []).length > 0 ? (
               <div className="upload-progress-list" aria-live="polite">
                 {(uploadingPhotos[rowUploadKey(row)] ?? []).map((item) => (
@@ -1301,17 +1377,18 @@ export default function HomePage() {
               </div>
             ) : null}
 
-            <label className="file-button">
-              <input
-                type="file"
-                accept="image/*"
-                capture="environment"
-                multiple
-                disabled={uploadingRow === rowUploadKey(row)}
-                onChange={(event) => handlePhotoChange(row, event)}
-              />
-              Add Photo
-            </label>
+            {getRowPhotoLinks(row).length < 3 ? (
+              <label className="file-button">
+                <input
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  multiple
+                  onChange={(event) => handlePhotoChange(row, event)}
+                />
+                Add Photo
+              </label>
+            ) : null}
           </article>
         ))}
       </section>

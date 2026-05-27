@@ -430,11 +430,13 @@ export async function searchSheetRows(query: string, limit = 100, target?: Sheet
   const photoIndexes = getPhotoColumnIndexes(headers);
   const statusIndex = findColumn(headers, "Carrier / Status");
   const personalizationIndex = findColumn(headers, "Personalization");
+  const internalStatusIndex = findAliasedColumn(headers, INTERNAL_STATUS_ALIASES);
   const normalizedQuery = query.trim().toLowerCase();
 
   return rows
     .map((row, index) => {
-      const status = row[statusIndex] ?? "";
+      const internalStatus = internalStatusIndex >= 0 ? row[internalStatusIndex] ?? "" : "";
+      const status = internalStatus || (row[statusIndex] ?? "");
 
       const photoLinks = photoIndexes
         .map((photoIndex, photoIndexPosition) => {
@@ -459,8 +461,47 @@ export async function searchSheetRows(query: string, limit = 100, target?: Sheet
       };
     })
     .filter((row) => !normalizedQuery || row.personalization.toLowerCase().includes(normalizedQuery))
+    .filter((row) => normalizeHeader(row.status) !== "packed")
     .sort((a, b) => a.priority - b.priority || a.rowNumber - b.rowNumber)
     .slice(0, limit);
+}
+
+export async function updateOrderInternalStatus(rowNumber: number, status: string, target?: SheetTarget): Promise<void> {
+  if (!Number.isInteger(rowNumber) || rowNumber < 1) {
+    throw new Error("Invalid row number. Expected a data row from the Google Sheet.");
+  }
+
+  const nextStatus = status.trim();
+
+  if (!nextStatus) {
+    throw new Error("Internal status cannot be blank.");
+  }
+
+  const resolved = resolveTarget(target);
+  const { headers: sheetHeaders, headerRowNumber } = await readSheetValues(target);
+  const headers = await ensureColumn(sheetHeaders, headerRowNumber, INTERNAL_STATUS_HEADER, INTERNAL_STATUS_ALIASES, target);
+  const statusIndex = findAliasedColumn(headers, INTERNAL_STATUS_ALIASES);
+
+  if (statusIndex === -1) {
+    throw new Error(`Missing required status column. Accepted headers: ${INTERNAL_STATUS_ALIASES.join(", ")}.`);
+  }
+
+  try {
+    await getSheetsClient().spreadsheets.values.update({
+      spreadsheetId: resolved.spreadsheetId,
+      range: `${quoteSheetName(resolved.tabName)}!${columnLetter(statusIndex)}${rowNumber}`,
+      valueInputOption: "USER_ENTERED",
+      requestBody: {
+        values: [[nextStatus]]
+      }
+    });
+  } catch (error) {
+    throw new Error(
+      `Google Sheets internal status update failed: ${googleApiMessage(error)}. Share the spreadsheet with ${resolved.serviceAccountEmail} as Editor.`
+    );
+  }
+
+  clearSheetCache(target);
 }
 
 export async function getSheetDiagnostics(target?: SheetTarget) {
