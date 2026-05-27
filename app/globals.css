@@ -707,6 +707,11 @@ select:focus {
   font-weight: 850;
 }
 
+.upload-progress-line.is-error {
+  color: var(--danger);
+  background: #fff0ed;
+}
+
 .file-button {
   width: 100%;
   margin-top: 12px;

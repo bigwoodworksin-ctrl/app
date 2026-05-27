@@ -33,6 +33,7 @@ type PhotoSlot = {
 type UploadProgress = {
   id: string;
   label: string;
+  error?: string;
 };
 
 type Diagnostics = {
@@ -698,8 +699,8 @@ export default function HomePage() {
         : ""
     );
 
-    const uploadOnePhoto = async (file: File) => {
-      const photo = await compressImage(file);
+    const uploadTask = async () => {
+      const photos = await Promise.all(files.map((file) => compressImage(file)));
       const response = await fetch("/api/upload-photo", {
         method: "POST",
         headers: {
@@ -710,7 +711,7 @@ export default function HomePage() {
           rowTargetBody(row, {
             rowNumber: row.rowNumber,
             personalization: row.personalization,
-            photos: [photo]
+            photos
           })
         )
       });
@@ -740,29 +741,33 @@ export default function HomePage() {
       );
     };
 
-    const uploadTask = async () => {
-      for (const file of files) {
-        await uploadOnePhoto(file);
-      }
-    };
-
     const previousUpload = photoUploadQueuesRef.current[key] ?? Promise.resolve();
     const nextUpload: Promise<void> = previousUpload
       .catch(() => undefined)
       .then(uploadTask)
       .catch((uploadError) => {
-        setError((uploadError as Error).message);
+        const message = (uploadError as Error).message;
+
+        setError(message);
+        setUploadingPhotos((currentUploads) => ({
+          ...currentUploads,
+          [key]: (currentUploads[key] ?? []).map((item) =>
+            progressItems.some((progressItem) => progressItem.id === item.id)
+              ? { ...item, label: item.label.replace("uploading...", "failed"), error: message }
+              : item
+          )
+        }));
       })
       .finally(() => {
-        photoUploadCountsRef.current[key] = Math.max(0, (photoUploadCountsRef.current[key] ?? 0) - files.length);
-
-        if (photoUploadCountsRef.current[key] === 0) {
-          delete photoUploadCountsRef.current[key];
-        }
-
         setUploadingPhotos((currentUploads) => {
+          photoUploadCountsRef.current[key] = Math.max(0, (photoUploadCountsRef.current[key] ?? 0) - files.length);
+
+          if (photoUploadCountsRef.current[key] === 0) {
+            delete photoUploadCountsRef.current[key];
+          }
+
           const remainingUploads = (currentUploads[key] ?? []).filter(
-            (item) => !progressItems.some((progressItem) => progressItem.id === item.id)
+            (item) => item.error || !progressItems.some((progressItem) => progressItem.id === item.id)
           );
           const nextUploads = { ...currentUploads };
 
@@ -1304,7 +1309,7 @@ export default function HomePage() {
             {(uploadingPhotos[rowUploadKey(row)] ?? []).length > 0 ? (
               <div className="upload-progress-list" aria-live="polite">
                 {(uploadingPhotos[rowUploadKey(row)] ?? []).map((item) => (
-                  <div className="upload-progress-line" key={item.id}>
+                  <div className={`upload-progress-line ${item.error ? "is-error" : ""}`} key={item.id}>
                     {item.label}
                   </div>
                 ))}
