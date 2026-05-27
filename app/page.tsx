@@ -138,6 +138,11 @@ function rowUploadKey(row: SearchRow): string {
   return `${row.sheetId ?? "default"}:${row.tabName ?? "default"}:${row.rowNumber}`;
 }
 
+function needsProductPhotoWarning(row: ShippingRow): boolean {
+  const status = row.status.trim().toLowerCase();
+  return !status || status === "new";
+}
+
 export default function HomePage() {
   const [password, setPassword] = useState("");
   const [token, setToken] = useState<string | null>(null);
@@ -168,6 +173,7 @@ export default function HomePage() {
   const [isFetchingNewSheet, setIsFetchingNewSheet] = useState(false);
   const [trackingInput, setTrackingInput] = useState("");
   const [shippingRow, setShippingRow] = useState<ShippingRow | null>(null);
+  const [photoWarningRow, setPhotoWarningRow] = useState<ShippingRow | null>(null);
   const [isSearchingTracking, setIsSearchingTracking] = useState(false);
   const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
   const [isUploadingDispatch, setIsUploadingDispatch] = useState(false);
@@ -883,6 +889,7 @@ export default function HomePage() {
     setIsSearchingTracking(true);
     setError("");
     setShippingRow(null);
+    setPhotoWarningRow(null);
 
     try {
       const response = await fetch(searchUrl("/api/shipping/search", { trackingId: trackingId.trim() }), {
@@ -901,6 +908,10 @@ export default function HomePage() {
       }
 
       setShippingRow(data.row);
+
+      if (needsProductPhotoWarning(data.row)) {
+        setPhotoWarningRow(data.row);
+      }
     } catch (trackingError) {
       setError((trackingError as Error).message);
     } finally {
@@ -949,6 +960,21 @@ export default function HomePage() {
     } finally {
       setIsUpdatingStatus(false);
     }
+  }
+
+  function handleProceedWithoutPhotos() {
+    setPhotoWarningRow(null);
+  }
+
+  function handleUploadProductPhotosFromTracking() {
+    if (!photoWarningRow) {
+      return;
+    }
+
+    setQuery(photoWarningRow.personalization || photoWarningRow.trackingId);
+    setActiveView("photos");
+    setPhotoWarningRow(null);
+    setError("");
   }
 
   async function handleDispatchPhoto(event: ChangeEvent<HTMLInputElement>) {
@@ -1422,6 +1448,23 @@ export default function HomePage() {
           {scannerError ? <p className="error-message">{scannerError}</p> : null}
 
           {error ? <p className="error-message">{error}</p> : null}
+
+          {photoWarningRow ? (
+            <section className="photo-warning-panel" aria-label="Product photo warning">
+              <strong>Product photos are not uploaded</strong>
+              <p>
+                This tracking row has trace set to {photoWarningRow.status || "New"}. Upload product photos before packing, or proceed anyway.
+              </p>
+              <div className="warning-actions">
+                <button className="secondary-button" type="button" onClick={handleProceedWithoutPhotos}>
+                  Proceed
+                </button>
+                <button className="primary-button" type="button" onClick={handleUploadProductPhotosFromTracking}>
+                  Upload Photo
+                </button>
+              </div>
+            </section>
+          ) : null}
 
           {shippingRow ? (
             <article className="result-card">
