@@ -2,8 +2,14 @@
 
 import type { ChangeEvent } from "react";
 import type { FormEvent } from "react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { compressImage } from "@/lib/image";
+
+type BarcodeDetectorInstance = {
+  detect: (source: ImageBitmapSource) => Promise<Array<{ rawValue: string }>>;
+};
+
+type BarcodeDetectorConstructor = new (options?: { formats?: string[] }) => BarcodeDetectorInstance;
 
 type SearchRow = {
   rowNumber: number;
@@ -150,6 +156,12 @@ export default function HomePage() {
   const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
   const [isUploadingDispatch, setIsUploadingDispatch] = useState(false);
   const [scanMessage, setScanMessage] = useState("");
+  const [isLiveScanning, setIsLiveScanning] = useState(false);
+  const [scannerError, setScannerError] = useState("");
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const scannerStreamRef = useRef<MediaStream | null>(null);
+  const scannerFrameRef = useRef<number | null>(null);
+  const scannerBusyRef = useRef(false);
 
   useEffect(() => {
     setToken(window.localStorage.getItem(TOKEN_KEY));
@@ -405,6 +417,7 @@ export default function HomePage() {
   }
 
   function handleSignOut() {
+    stopLiveScanner();
     window.localStorage.removeItem(TOKEN_KEY);
     setToken(null);
     setRows([]);
@@ -531,6 +544,28 @@ export default function HomePage() {
     setActiveProfileId(nextFocusedProfileId);
     window.localStorage.setItem(ACTIVE_PROFILE_IDS_KEY, JSON.stringify(finalIds));
     window.localStorage.setItem(ACTIVE_PROFILE_KEY, nextFocusedProfileId);
+    setRows([]);
+    setShippingRow(null);
+    setError("");
+  }
+
+  function handleDeleteSheetProfile(profileId: string) {
+    if (sheetProfiles.length <= 1) {
+      setError("Keep at least one sheet profile.");
+      return;
+    }
+
+    const nextProfiles = sheetProfiles.filter((profile) => profile.id !== profileId);
+    const nextActiveId = activeProfileId === profileId ? nextProfiles[0].id : activeProfileId;
+    const nextActiveIds = activeProfileIds.filter((currentId) => currentId !== profileId);
+    const finalActiveIds = nextActiveIds.length ? nextActiveIds : [nextActiveId];
+
+    setSheetProfiles(nextProfiles);
+    setActiveProfileId(nextActiveId);
+    setActiveProfileIds(finalActiveIds);
+    window.localStorage.setItem(SHEET_PROFILES_KEY, JSON.stringify(nextProfiles));
+    window.localStorage.setItem(ACTIVE_PROFILE_KEY, nextActiveId);
+    window.localStorage.setItem(ACTIVE_PROFILE_IDS_KEY, JSON.stringify(finalActiveIds));
     setRows([]);
     setShippingRow(null);
     setError("");
@@ -723,10 +758,8 @@ export default function HomePage() {
     }
   }
 
-  async function handleTrackingSearch(event?: FormEvent<HTMLFormElement>) {
-    event?.preventDefault();
-
-    if (!token || !trackingInput.trim()) {
+  async function searchTrackingId(trackingId: string) {
+    if (!token || !trackingId.trim()) {
       return;
     }
 
@@ -735,7 +768,7 @@ export default function HomePage() {
     setShippingRow(null);
 
     try {
-      const response = await fetch(targetUrl("/api/shipping/search", { trackingId: trackingInput.trim() }), {
+      const response = await fetch(targetUrl("/api/shipping/search", { trackingId: trackingId.trim() }), {
         headers: {
           "x-app-token": token
         }
@@ -756,6 +789,11 @@ export default function HomePage() {
     } finally {
       setIsSearchingTracking(false);
     }
+  }
+
+  async function handleTrackingSearch(event?: FormEvent<HTMLFormElement>) {
+    event?.preventDefault();
+    await searchTrackingId(trackingInput);
   }
 
   async function handleStatusUpdate(status: string) {
@@ -835,6 +873,113 @@ export default function HomePage() {
     }
   }
 
+  function stopLiveScanner() {
+    if (scannerFrameRef.current !== null) {
+      window.cancelAnimationFrame(scannerFrameRef.current);
+      scannerFrameRef.current = null;
+    }
+
+    scannerStreamRef.current?.getTracks().forEach((track) => track.stop());
+    scannerStreamRef.current = null;
+    scannerBusyRef.current = false;
+
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+
+    setIsLiveScanning(false);
+  }
+
+  function scanVideoFrame(detector: BarcodeDetectorInstance) {
+    const video = videoRef.current;
+
+    if (!video || !scannerStreamRef.current) {
+      return;
+    }
+
+    const scanNextFrame = () => {
+      if (!scannerStreamRef.current) {
+        return;
+      }
+
+      scannerFrameRef.current = window.requestAnimationFrame(() => scanVideoFrame(detector));
+    };
+
+    if (scannerBusyRef.current || video.readyState < 4) {
+      scanNextFrame();
+      return;
+    }
+
+    scannerBusyRef.current = true;
+    detector
+      .detect(video)
+      .then((codes) => {
+        const rawValue = codes[0]?.rawValue?.trim() ?? "";
+
+        if (rawValue) {
+          setTrackingInput(rawValue);
+          setScanMessage(`Scanned: ${rawValue}`);
+          stopLiveScanner();
+          void searchTrackingId(rawValue);
+          return;
+        }
+
+        scanNextFrame();
+      })
+      .catch(() => {
+        scanNextFrame();
+      })
+      .finally(() => {
+        scannerBusyRef.current = false;
+      });
+  }
+
+  async function startLiveScanner() {
+    setScannerError("");
+    setScanMessage("");
+
+    try {
+      const BarcodeDetectorClass = (window as unknown as { BarcodeDetector?: BarcodeDetectorConstructor }).BarcodeDetector;
+
+      if (!BarcodeDetectorClass) {
+        throw new Error("Live barcode scanning is not supported in this browser. Use Chrome on Android or type the tracking ID manually.");
+      }
+
+      if (!navigator.mediaDevices?.getUserMedia) {
+        throw new Error("Camera access is not available in this browser.");
+      }
+
+      stopLiveScanner();
+
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: {
+          facingMode: { ideal: "environment" }
+        }
+      });
+      const video = videoRef.current;
+
+      if (!video) {
+        stream.getTracks().forEach((track) => track.stop());
+        return;
+      }
+
+      scannerStreamRef.current = stream;
+      video.srcObject = stream;
+      video.setAttribute("playsinline", "true");
+      await video.play();
+      setIsLiveScanning(true);
+      scanVideoFrame(
+        new BarcodeDetectorClass({
+          formats: ["code_128", "code_39", "ean_13", "ean_8", "qr_code", "upc_a", "upc_e"]
+        })
+      );
+    } catch (scanError) {
+      stopLiveScanner();
+      setScannerError((scanError as Error).message);
+    }
+  }
+
   async function handleBarcodeImage(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     event.target.value = "";
@@ -873,6 +1018,24 @@ export default function HomePage() {
       setScanMessage((scanError as Error).message);
     }
   }
+
+  useEffect(() => {
+    if (!token || activeView !== "shipping") {
+      stopLiveScanner();
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      void startLiveScanner();
+    }, 350);
+
+    return () => {
+      window.clearTimeout(timer);
+      stopLiveScanner();
+    };
+    // The scanner functions intentionally use the latest camera refs and selected sheet state.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token, activeView]);
 
   if (!token) {
     return (
@@ -1086,13 +1249,19 @@ export default function HomePage() {
               <button className="primary-button" disabled={isSearchingTracking || !trackingInput.trim()}>
                 {isSearchingTracking ? "Searching..." : "Find Tracking"}
               </button>
-              <label className="secondary-button scan-button">
-                Scan Barcode
-                <input type="file" accept="image/*" capture="environment" onChange={handleBarcodeImage} />
-              </label>
+              <button className="secondary-button scan-button" type="button" onClick={isLiveScanning ? stopLiveScanner : startLiveScanner}>
+                {isLiveScanning ? "Stop Scan" : "Scan Barcode"}
+              </button>
             </div>
             {scanMessage ? <p className="muted">{scanMessage}</p> : null}
           </form>
+
+          <div className={`live-scanner ${isLiveScanning ? "is-scanning" : ""}`} aria-label="Live barcode scanner">
+            <video ref={videoRef} muted playsInline autoPlay />
+            <div className="scan-frame" aria-hidden="true" />
+            <p>{isLiveScanning ? "Place barcode inside the rectangle" : "Camera scanner"}</p>
+          </div>
+          {scannerError ? <p className="error-message">{scannerError}</p> : null}
 
           {error ? <p className="error-message">{error}</p> : null}
 
@@ -1156,6 +1325,14 @@ export default function HomePage() {
                     </option>
                   ))}
                 </select>
+                <button
+                  className="delete-sheet-button"
+                  type="button"
+                  onClick={() => handleDeleteSheetProfile(profile.id)}
+                  disabled={sheetProfiles.length <= 1}
+                >
+                  Delete Sheet
+                </button>
               </div>
             ))}
           </div>

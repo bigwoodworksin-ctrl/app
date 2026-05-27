@@ -399,6 +399,16 @@ select:focus {
   font-weight: 750;
 }
 
+.delete-sheet-button {
+  min-height: 42px;
+  border: 1px solid rgba(164, 63, 50, 0.28);
+  border-radius: 8px;
+  padding: 0 12px;
+  color: var(--danger);
+  background: #fff0ed;
+  font-weight: 850;
+}
+
 .inline-controls,
 .shipping-actions {
   display: grid;
@@ -440,6 +450,71 @@ select:focus {
   height: 1px;
   opacity: 0;
   pointer-events: none;
+}
+
+.live-scanner {
+  position: relative;
+  min-height: 190px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background:
+    linear-gradient(135deg, rgba(23, 107, 91, 0.16), rgba(23, 107, 91, 0.04)),
+    #101816;
+}
+
+.live-scanner video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0.28;
+}
+
+.live-scanner.is-scanning video {
+  opacity: 1;
+}
+
+.scan-frame {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: 2;
+  width: min(82%, 430px);
+  height: 96px;
+  transform: translate(-50%, -50%);
+  border: 3px solid rgba(255, 255, 255, 0.92);
+  border-radius: 8px;
+  box-shadow:
+    0 0 0 999px rgba(0, 0, 0, 0.38),
+    0 0 22px rgba(23, 107, 91, 0.48);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.scan-frame::before {
+  content: "";
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  top: 50%;
+  height: 2px;
+  transform: translateY(-50%);
+  background: rgba(255, 255, 255, 0.76);
+}
+
+.live-scanner p {
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  bottom: 12px;
+  z-index: 3;
+  margin: 0;
+  color: #ffffff;
+  font-size: 0.86rem;
+  font-weight: 850;
+  text-align: center;
+  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.55);
 }
 
 .dispatch-link {
