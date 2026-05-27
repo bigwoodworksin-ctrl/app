@@ -175,6 +175,7 @@ export default function HomePage() {
   const scannerFrameRef = useRef<number | null>(null);
   const scannerBusyRef = useRef(false);
   const photoUploadQueuesRef = useRef<Record<string, Promise<void>>>({});
+  const photoUploadCountsRef = useRef<Record<string, number>>({});
 
   useEffect(() => {
     setToken(window.localStorage.getItem(TOKEN_KEY));
@@ -662,15 +663,26 @@ export default function HomePage() {
 
   function handlePhotoChange(row: SearchRow, event: ChangeEvent<HTMLInputElement>) {
     const selectedFiles = Array.from(event.target.files ?? []);
-    const files = selectedFiles.slice(0, MAX_PHOTOS_PER_UPLOAD);
     event.target.value = "";
 
-    if (files.length === 0 || !token) {
+    if (selectedFiles.length === 0 || !token) {
       return;
     }
 
     const key = rowUploadKey(row);
-    const startNumber = getRowPhotoLinks(row).length + (uploadingPhotos[key]?.length ?? 0) + 1;
+    const existingPhotoCount = getRowPhotoLinks(row).length;
+    const queuedPhotoCount = photoUploadCountsRef.current[key] ?? 0;
+    const availableSlotCount = Math.max(0, MAX_PHOTOS_PER_UPLOAD - existingPhotoCount - queuedPhotoCount);
+    const files = selectedFiles.slice(0, availableSlotCount);
+
+    if (files.length === 0) {
+      setError("This row already has 3 photos or uploads waiting.");
+      return;
+    }
+
+    photoUploadCountsRef.current[key] = queuedPhotoCount + files.length;
+
+    const startNumber = existingPhotoCount + queuedPhotoCount + 1;
     const progressItems = files.map((file, index) => ({
       id: `${Date.now()}-${index}-${file.name}`,
       label: `Photo ${startNumber + index} uploading...`
@@ -680,10 +692,14 @@ export default function HomePage() {
       ...currentUploads,
       [key]: [...(currentUploads[key] ?? []), ...progressItems]
     }));
-    setError(selectedFiles.length > MAX_PHOTOS_PER_UPLOAD ? "Uploading the first 3 selected images." : "");
+    setError(
+      selectedFiles.length > files.length
+        ? `Uploading ${files.length} photo${files.length === 1 ? "" : "s"}. This row only has ${files.length} slot${files.length === 1 ? "" : "s"} left.`
+        : ""
+    );
 
-    const uploadTask = async () => {
-      const photos = await Promise.all(files.map((file) => compressImage(file)));
+    const uploadOnePhoto = async (file: File) => {
+      const photo = await compressImage(file);
       const response = await fetch("/api/upload-photo", {
         method: "POST",
         headers: {
@@ -694,7 +710,7 @@ export default function HomePage() {
           rowTargetBody(row, {
             rowNumber: row.rowNumber,
             personalization: row.personalization,
-            photos
+            photos: [photo]
           })
         )
       });
@@ -724,14 +740,26 @@ export default function HomePage() {
       );
     };
 
+    const uploadTask = async () => {
+      for (const file of files) {
+        await uploadOnePhoto(file);
+      }
+    };
+
     const previousUpload = photoUploadQueuesRef.current[key] ?? Promise.resolve();
-    const nextUpload = previousUpload
+    const nextUpload: Promise<void> = previousUpload
       .catch(() => undefined)
       .then(uploadTask)
       .catch((uploadError) => {
         setError((uploadError as Error).message);
       })
       .finally(() => {
+        photoUploadCountsRef.current[key] = Math.max(0, (photoUploadCountsRef.current[key] ?? 0) - files.length);
+
+        if (photoUploadCountsRef.current[key] === 0) {
+          delete photoUploadCountsRef.current[key];
+        }
+
         setUploadingPhotos((currentUploads) => {
           const remainingUploads = (currentUploads[key] ?? []).filter(
             (item) => !progressItems.some((progressItem) => progressItem.id === item.id)
