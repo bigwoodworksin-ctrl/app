@@ -5,7 +5,7 @@ const REQUIRED_COLUMNS = ["Photo Link", "Carrier / Status", "Personalization"] a
 const PHOTO_COLUMNS = ["Photo Link", "Photo Link 2", "Photo Link 3"] as const;
 const COLUMN_ALIASES: Record<(typeof REQUIRED_COLUMNS)[number], string[]> = {
   "Photo Link": ["Photo Link", "Photo", "Image Link"],
-  "Carrier / Status": ["Carrier / Status", "Carrier", "Status", "Carrier Status"],
+  "Carrier / Status": ["Carrier / Status", "Carrier", "Status", "Carrier Status", "Shipping Status"],
   Personalization: ["Personalization", "Personalisation", "Personalized", "Personalized Text"]
 };
 const CACHE_TTL_MS = 45_000;
@@ -187,6 +187,11 @@ function findAliasedColumn(headers: string[], aliases: string[]): number {
   return headers.findIndex((header) => normalizedAliases.includes(normalizeHeader(header)));
 }
 
+function findColumnIndex(headers: string[], aliases: readonly string[]): number {
+  const normalizedAliases = aliases.map(normalizeHeader);
+  return headers.findIndex((header) => normalizedAliases.includes(normalizeHeader(header)));
+}
+
 function findTrackingColumn(headers: string[]): number {
   const exactTrackingIndex = headers.findIndex((header) => normalizeHeader(header) === "tracking");
 
@@ -278,16 +283,12 @@ function findOrderHeaderRow(values: string[][]): { headers: string[]; headerRowI
 
   for (let index = 0; index < rowsToScan.length; index += 1) {
     const headers = rowsToScan[index].map(String);
-    const hasAllRequiredColumns = REQUIRED_COLUMNS.every((column) => {
-      try {
-        findColumn(headers, column);
-        return true;
-      } catch {
-        return false;
-      }
-    });
+    const hasPhotoColumn = findColumnIndex(headers, COLUMN_ALIASES["Photo Link"]) !== -1;
+    const hasStatusColumn = findColumnIndex(headers, COLUMN_ALIASES["Carrier / Status"]) !== -1;
+    const hasPersonalizationColumn = findColumnIndex(headers, COLUMN_ALIASES.Personalization) !== -1;
+    const hasMinimumColumns = hasStatusColumn && hasPersonalizationColumn;
 
-    if (hasAllRequiredColumns) {
+    if ((hasPhotoColumn && hasMinimumColumns) || hasMinimumColumns) {
       return { headers, headerRowIndex: index };
     }
   }
@@ -297,7 +298,7 @@ function findOrderHeaderRow(values: string[][]): { headers: string[]; headerRowI
     .join(" | ");
 
   throw new Error(
-    `Could not find the required header row in the first 10 rows. I saw: ${previewHeaders}. Required columns are Photo Link, Carrier/Status or Carrier, and Personalization.`
+    `Could not find the required header row in the first 10 rows. I saw: ${previewHeaders}. Required columns are Personalization and Carrier/Status, Carrier, or Shipping Status. Photo Link columns can be created automatically.`
   );
 }
 
