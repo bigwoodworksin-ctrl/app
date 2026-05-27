@@ -516,7 +516,7 @@ export async function getEmptyPhotoSlots(rowNumber: number, target?: SheetTarget
       slot: (index + 1) as 1 | 2 | 3,
       value: photoIndex >= 0 ? row[photoIndex] ?? "" : ""
     }))
-    .filter((photo) => extractPhotoUrls(photo.value).length === 0 && !photo.value.trim())
+    .filter((photo) => extractPhotoUrls(photo.value).length === 0)
     .map((photo) => photo.slot);
 }
 
