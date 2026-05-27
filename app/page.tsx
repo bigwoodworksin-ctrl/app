@@ -145,6 +145,7 @@ export default function HomePage() {
   const [rows, setRows] = useState<SearchRow[]>([]);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
+  const [uploadingRow, setUploadingRow] = useState<string | null>(null);
   const [uploadingPhotos, setUploadingPhotos] = useState<Record<string, UploadProgress[]>>({});
   const [deletingPhoto, setDeletingPhoto] = useState<string | null>(null);
   const [error, setError] = useState("");
@@ -175,8 +176,6 @@ export default function HomePage() {
   const scannerStreamRef = useRef<MediaStream | null>(null);
   const scannerFrameRef = useRef<number | null>(null);
   const scannerBusyRef = useRef(false);
-  const photoUploadQueuesRef = useRef<Record<string, Promise<void>>>({});
-  const photoUploadCountsRef = useRef<Record<string, number>>({});
 
   useEffect(() => {
     setToken(window.localStorage.getItem(TOKEN_KEY));
@@ -662,28 +661,17 @@ export default function HomePage() {
     }
   }
 
-  function handlePhotoChange(row: SearchRow, event: ChangeEvent<HTMLInputElement>) {
+  async function handlePhotoChange(row: SearchRow, event: ChangeEvent<HTMLInputElement>) {
     const selectedFiles = Array.from(event.target.files ?? []);
+    const files = selectedFiles.slice(0, MAX_PHOTOS_PER_UPLOAD);
     event.target.value = "";
 
-    if (selectedFiles.length === 0 || !token) {
+    if (files.length === 0 || !token) {
       return;
     }
 
     const key = rowUploadKey(row);
-    const existingPhotoCount = getRowPhotoLinks(row).length;
-    const queuedPhotoCount = photoUploadCountsRef.current[key] ?? 0;
-    const availableSlotCount = Math.max(0, MAX_PHOTOS_PER_UPLOAD - existingPhotoCount - queuedPhotoCount);
-    const files = selectedFiles.slice(0, availableSlotCount);
-
-    if (files.length === 0) {
-      setError("This row already has 3 photos or uploads waiting.");
-      return;
-    }
-
-    photoUploadCountsRef.current[key] = queuedPhotoCount + files.length;
-
-    const startNumber = existingPhotoCount + queuedPhotoCount + 1;
+    const startNumber = getRowPhotoLinks(row).length + 1;
     const progressItems = files.map((file, index) => ({
       id: `${Date.now()}-${index}-${file.name}`,
       label: `Photo ${startNumber + index} uploading...`
@@ -693,13 +681,10 @@ export default function HomePage() {
       ...currentUploads,
       [key]: [...(currentUploads[key] ?? []), ...progressItems]
     }));
-    setError(
-      selectedFiles.length > files.length
-        ? `Uploading ${files.length} photo${files.length === 1 ? "" : "s"}. This row only has ${files.length} slot${files.length === 1 ? "" : "s"} left.`
-        : ""
-    );
+    setUploadingRow(key);
+    setError(selectedFiles.length > MAX_PHOTOS_PER_UPLOAD ? "Uploading the first 3 selected images." : "");
 
-    const uploadTask = async () => {
+    try {
       const photos = await Promise.all(files.map((file) => compressImage(file)));
       const response = await fetch("/api/upload-photo", {
         method: "POST",
@@ -739,53 +724,37 @@ export default function HomePage() {
             : currentRow
         )
       );
-    };
+    } catch (uploadError) {
+      const message = (uploadError as Error).message;
 
-    const previousUpload = photoUploadQueuesRef.current[key] ?? Promise.resolve();
-    const nextUpload: Promise<void> = previousUpload
-      .catch(() => undefined)
-      .then(uploadTask)
-      .catch((uploadError) => {
-        const message = (uploadError as Error).message;
+      setError(message);
+      setUploadingPhotos((currentUploads) => ({
+        ...currentUploads,
+        [key]: (currentUploads[key] ?? []).map((item) =>
+          progressItems.some((progressItem) => progressItem.id === item.id)
+            ? { ...item, label: `${item.label.replace("uploading...", "failed")}: ${message}`, error: message }
+            : item
+        )
+      }));
+      return;
+    } finally {
+      setUploadingRow(null);
+    }
 
-        setError(message);
-        setUploadingPhotos((currentUploads) => ({
-          ...currentUploads,
-          [key]: (currentUploads[key] ?? []).map((item) =>
-            progressItems.some((progressItem) => progressItem.id === item.id)
-              ? { ...item, label: item.label.replace("uploading...", "failed"), error: message }
-              : item
-          )
-        }));
-      })
-      .finally(() => {
-        setUploadingPhotos((currentUploads) => {
-          photoUploadCountsRef.current[key] = Math.max(0, (photoUploadCountsRef.current[key] ?? 0) - files.length);
+    setUploadingPhotos((currentUploads) => {
+      const remainingUploads = (currentUploads[key] ?? []).filter(
+        (item) => !progressItems.some((progressItem) => progressItem.id === item.id)
+      );
+      const nextUploads = { ...currentUploads };
 
-          if (photoUploadCountsRef.current[key] === 0) {
-            delete photoUploadCountsRef.current[key];
-          }
+      if (remainingUploads.length) {
+        nextUploads[key] = remainingUploads;
+      } else {
+        delete nextUploads[key];
+      }
 
-          const remainingUploads = (currentUploads[key] ?? []).filter(
-            (item) => item.error || !progressItems.some((progressItem) => progressItem.id === item.id)
-          );
-          const nextUploads = { ...currentUploads };
-
-          if (remainingUploads.length) {
-            nextUploads[key] = remainingUploads;
-          } else {
-            delete nextUploads[key];
-          }
-
-          return nextUploads;
-        });
-
-        if (photoUploadQueuesRef.current[key] === nextUpload) {
-          delete photoUploadQueuesRef.current[key];
-        }
-      });
-
-    photoUploadQueuesRef.current[key] = nextUpload;
+      return nextUploads;
+    });
   }
 
   async function handleDeletePhoto(row: SearchRow, photo: PhotoSlot) {
@@ -1322,6 +1291,7 @@ export default function HomePage() {
                 accept="image/*"
                 capture="environment"
                 multiple
+                disabled={uploadingRow === rowUploadKey(row)}
                 onChange={(event) => handlePhotoChange(row, event)}
               />
               Add Photo
