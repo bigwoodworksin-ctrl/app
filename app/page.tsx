@@ -12,6 +12,9 @@ type SearchRow = {
   status: string;
   personalization: string;
   priority: 1 | 2;
+  sheetId?: string;
+  tabName?: string;
+  sheetName?: string;
 };
 
 type PhotoSlot = {
@@ -61,6 +64,7 @@ type ShippingRow = {
 const TOKEN_KEY = "order-photo-manager-token";
 const SHEET_PROFILES_KEY = "order-photo-manager-sheet-profiles";
 const ACTIVE_PROFILE_KEY = "order-photo-manager-active-profile";
+const ACTIVE_PROFILE_IDS_KEY = "order-photo-manager-active-profile-ids";
 const SEARCH_DELAY_MS = 300;
 const MAX_PHOTOS_PER_UPLOAD = 3;
 const SHIPPING_STATUSES = ["Packed", "Dispatched", "Delivered", "Shipment On Hold", "In Transit", "Failed", "Clearance Event"];
@@ -133,6 +137,7 @@ export default function HomePage() {
   const [activeView, setActiveView] = useState<"photos" | "shipping" | "settings">("photos");
   const [sheetProfiles, setSheetProfiles] = useState<SheetProfile[]>([]);
   const [activeProfileId, setActiveProfileId] = useState("");
+  const [activeProfileIds, setActiveProfileIds] = useState<string[]>([]);
   const [newSheetName, setNewSheetName] = useState("");
   const [newSheetUrl, setNewSheetUrl] = useState("");
   const [newSheetTab, setNewSheetTab] = useState("");
@@ -168,7 +173,20 @@ export default function HomePage() {
     }));
 
     setSheetProfiles(safeProfiles);
-    setActiveProfileId(window.localStorage.getItem(ACTIVE_PROFILE_KEY) || safeProfiles[0].id);
+    const storedActiveId = window.localStorage.getItem(ACTIVE_PROFILE_KEY) || safeProfiles[0].id;
+    let storedActiveIds = [storedActiveId];
+
+    try {
+      const parsedActiveIds = JSON.parse(window.localStorage.getItem(ACTIVE_PROFILE_IDS_KEY) ?? "[]") as string[];
+      storedActiveIds = parsedActiveIds.length ? parsedActiveIds : [storedActiveId];
+    } catch {
+      storedActiveIds = [storedActiveId];
+    }
+
+    const safeActiveIds = storedActiveIds.filter((profileId) => safeProfiles.some((profile) => profile.id === profileId));
+
+    setActiveProfileId(safeProfiles.some((profile) => profile.id === storedActiveId) ? storedActiveId : safeProfiles[0].id);
+    setActiveProfileIds(safeActiveIds.length ? safeActiveIds : [safeProfiles[0].id]);
     const splashTimer = window.setTimeout(() => setShowSplash(false), 1800);
 
     if ("serviceWorker" in navigator) {
@@ -181,6 +199,8 @@ export default function HomePage() {
   const trimmedQuery = useMemo(() => query.trim(), [query]);
   const activeProfile = sheetProfiles.find((profile) => profile.id === activeProfileId) ?? sheetProfiles[0];
   const activeProfileTabs = activeProfile?.tabs ?? [];
+  const searchProfiles = sheetProfiles.filter((profile) => activeProfileIds.includes(profile.id));
+  const activeSearchProfiles = searchProfiles.length ? searchProfiles : activeProfile ? [activeProfile] : [];
   const selectedTarget = {
     sheetId: activeProfile?.sheetId ?? "",
     tabName: activeProfile?.tabName ?? ""
@@ -205,6 +225,25 @@ export default function HomePage() {
     return `${path}?${params.toString()}`;
   }
 
+  function searchUrl(path: string, extra?: Record<string, string>) {
+    const params = new URLSearchParams();
+    const targets = activeSearchProfiles.map((profile) => ({
+      sheetId: profile.sheetId || undefined,
+      tabName: profile.tabName || undefined,
+      sheetName: profile.name
+    }));
+
+    for (const [key, value] of Object.entries(extra ?? {})) {
+      params.set(key, value);
+    }
+
+    if (targets.length > 0) {
+      params.set("targets", JSON.stringify(targets));
+    }
+
+    return `${path}?${params.toString()}`;
+  }
+
   function targetBody<T extends object>(body: T): T & { sheetId?: string; tabName?: string } {
     return {
       ...body,
@@ -213,9 +252,25 @@ export default function HomePage() {
     };
   }
 
-  function saveProfiles(nextProfiles: SheetProfile[], nextActiveId = activeProfileId) {
+  function rowTargetBody<T extends object>(row: SearchRow, body: T): T & { sheetId?: string; tabName?: string } {
+    return {
+      ...body,
+      sheetId: row.sheetId || selectedTarget.sheetId || undefined,
+      tabName: row.tabName || selectedTarget.tabName || undefined
+    };
+  }
+
+  function saveProfiles(nextProfiles: SheetProfile[], nextActiveId = activeProfileId, ensureActive = true) {
     setSheetProfiles(nextProfiles);
     setActiveProfileId(nextActiveId);
+    setActiveProfileIds((currentIds) => {
+      const nextIds = currentIds.filter((profileId) => nextProfiles.some((profile) => profile.id === profileId));
+      const finalIds = ensureActive && !nextIds.includes(nextActiveId) ? [...nextIds, nextActiveId] : nextIds;
+      const safeFinalIds = finalIds.length ? finalIds : [nextActiveId];
+
+      window.localStorage.setItem(ACTIVE_PROFILE_IDS_KEY, JSON.stringify(safeFinalIds));
+      return safeFinalIds;
+    });
     window.localStorage.setItem(SHEET_PROFILES_KEY, JSON.stringify(nextProfiles));
     window.localStorage.setItem(ACTIVE_PROFILE_KEY, nextActiveId);
   }
@@ -255,7 +310,7 @@ export default function HomePage() {
       setError("");
 
       try {
-        const response = await fetch(targetUrl("/api/search", { q: trimmedQuery }), {
+        const response = await fetch(searchUrl("/api/search", { q: trimmedQuery }), {
           headers: {
             "x-app-token": token
           },
@@ -282,7 +337,7 @@ export default function HomePage() {
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [token, trimmedQuery, activeProfileId, activeProfile?.sheetId, activeProfile?.tabName]);
+  }, [token, trimmedQuery, activeProfileId, activeProfileIds, activeProfile?.sheetId, activeProfile?.tabName, sheetProfiles]);
 
   useEffect(() => {
     const sheetUrl = newSheetUrl.trim();
@@ -453,7 +508,29 @@ export default function HomePage() {
 
   function handleProfileChange(profileId: string) {
     setActiveProfileId(profileId);
+    setActiveProfileIds((currentIds) => {
+      const nextIds = currentIds.includes(profileId) ? currentIds : [...currentIds, profileId];
+
+      window.localStorage.setItem(ACTIVE_PROFILE_IDS_KEY, JSON.stringify(nextIds));
+      return nextIds;
+    });
     window.localStorage.setItem(ACTIVE_PROFILE_KEY, profileId);
+    setRows([]);
+    setShippingRow(null);
+    setError("");
+  }
+
+  function handleProfileEnabled(profileId: string, enabled: boolean) {
+    const nextIds = enabled
+      ? [...new Set([...activeProfileIds, profileId])]
+      : activeProfileIds.filter((currentId) => currentId !== profileId);
+    const finalIds = nextIds.length ? nextIds : [profileId];
+    const nextFocusedProfileId = finalIds.includes(activeProfileId) ? activeProfileId : finalIds[0];
+
+    setActiveProfileIds(finalIds);
+    setActiveProfileId(nextFocusedProfileId);
+    window.localStorage.setItem(ACTIVE_PROFILE_IDS_KEY, JSON.stringify(finalIds));
+    window.localStorage.setItem(ACTIVE_PROFILE_KEY, nextFocusedProfileId);
     setRows([]);
     setShippingRow(null);
     setError("");
@@ -464,11 +541,15 @@ export default function HomePage() {
       return;
     }
 
+    handleProfileTabChange(activeProfile.id, tabName);
+  }
+
+  function handleProfileTabChange(profileId: string, tabName: string, ensureActive = activeProfileIds.includes(profileId)) {
     const nextProfiles = sheetProfiles.map((profile) =>
-      profile.id === activeProfile.id ? { ...profile, tabName } : profile
+      profile.id === profileId ? { ...profile, tabName } : profile
     );
 
-    saveProfiles(nextProfiles, activeProfile.id);
+    saveProfiles(nextProfiles, profileId, ensureActive);
     setRows([]);
     setShippingRow(null);
   }
@@ -552,7 +633,7 @@ export default function HomePage() {
           "x-app-token": token
         },
         body: JSON.stringify(
-          targetBody({
+          rowTargetBody(row, {
             rowNumber: row.rowNumber,
             personalization: row.personalization,
             photos
@@ -607,7 +688,7 @@ export default function HomePage() {
           "x-app-token": token
         },
         body: JSON.stringify(
-          targetBody({
+          rowTargetBody(row, {
             rowNumber: row.rowNumber,
             slot: photo.slot,
             imageUrl: photo.url
@@ -863,13 +944,13 @@ export default function HomePage() {
         <section className="sheet-strip" aria-label="Current sheet and month tab">
           <div className="sheet-strip-name">
             <img className="sheet-strip-icon" src="/icons/spreadsheet.svg" alt="" aria-hidden="true" />
-            <span>Current sheet</span>
-            <strong>{activeProfile?.name ?? "Default Sheet"}</strong>
+            <span>Active sheets</span>
+            <strong>{activeSearchProfiles.map((profile) => profile.name).join(", ") || "Default Sheet"}</strong>
           </div>
           <div className="sheet-strip-name sheet-strip-current-tab">
             <img className="sheet-strip-icon" src="/icons/spreadsheet.svg" alt="" aria-hidden="true" />
-            <span>Current tab</span>
-            <strong>{activeProfile?.tabName || "No tab selected"}</strong>
+            <span>Selected tabs</span>
+            <strong>{activeSearchProfiles.map((profile) => profile.tabName || "No tab").join(", ") || "No tab selected"}</strong>
           </div>
         </section>
       ) : null}
@@ -945,6 +1026,11 @@ export default function HomePage() {
                 {friendlyStatus(row.status)}
               </span>
             </div>
+            {row.sheetName || row.tabName ? (
+              <p className="muted source-line">
+                {[row.sheetName, row.tabName].filter(Boolean).join(" / ")}
+              </p>
+            ) : null}
 
             <p className="personalization">{row.personalization || "No personalization text"}</p>
 
@@ -1050,8 +1136,31 @@ export default function HomePage() {
         </section>
       ) : (
         <section className="settings-panel" aria-label="Sheet settings">
+          <div className="multi-sheet-list" aria-label="Search sheets">
+            <label>Use these sheets in search</label>
+            {sheetProfiles.map((profile) => (
+              <div className="sheet-choice" key={profile.id}>
+                <label className="sheet-choice-check">
+                  <input
+                    type="checkbox"
+                    checked={activeProfileIds.includes(profile.id)}
+                    onChange={(event) => handleProfileEnabled(profile.id, event.target.checked)}
+                  />
+                  <span>{profile.name}</span>
+                </label>
+                <select value={profile.tabName} onChange={(event) => handleProfileTabChange(profile.id, event.target.value)}>
+                  <option value={profile.tabName}>{profile.tabName || "Select tab"}</option>
+                  {(profile.tabs ?? []).filter((tab) => tab.title !== profile.tabName).map((tab) => (
+                    <option value={tab.title} key={tab.sheetId}>
+                      {tab.title}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ))}
+          </div>
           <div className="field-row">
-            <label htmlFor="settings-sheet-profile">Active sheet</label>
+            <label htmlFor="settings-sheet-profile">Edit sheet</label>
             <div className="icon-field">
               <img src="/icons/spreadsheet.svg" alt="" aria-hidden="true" />
               <select id="settings-sheet-profile" value={activeProfileId} onChange={(event) => handleProfileChange(event.target.value)}>

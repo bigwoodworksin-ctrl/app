@@ -113,7 +113,7 @@ function normalizeHeader(value: string): string {
 }
 
 function normalizeTrackingValue(value: string): string {
-  return value.trim().toLowerCase().replace(/\s+/g, "");
+  return value.trim().toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
 function columnLetter(index: number): string {
@@ -269,9 +269,8 @@ function findShippingHeaderRow(values: string[][]): { headers: string[]; headerR
   for (let index = 0; index < rowsToScan.length; index += 1) {
     const headers = rowsToScan[index].map(String);
     const hasTracking = findAliasedColumn(headers, TRACKING_ALIASES["Tracking ID"]) !== -1;
-    const hasStatus = findAliasedColumn(headers, TRACKING_ALIASES["Carrier / Status"]) !== -1;
 
-    if (hasTracking && hasStatus) {
+    if (hasTracking) {
       return { headers, headerRowIndex: index };
     }
   }
@@ -281,7 +280,7 @@ function findShippingHeaderRow(values: string[][]): { headers: string[]; headerR
     .join(" | ");
 
   throw new Error(
-    `Could not find the shipping header row in the first 10 rows. I saw: ${previewHeaders}. Required columns are Tracking ID/Tracking Number and Carrier/Status or Carrier.`
+    `Could not find the shipping header row in the first 10 rows. I saw: ${previewHeaders}. Required column is Tracking, Tracking ID, Tracking Number, AWB, or Consignment Number.`
   );
 }
 
@@ -606,6 +605,7 @@ export async function findShippingRowByTracking(trackingId: string, target?: She
   }
 
   let { headers, headerRowNumber, rows } = await readSheetValues(target, "shipping");
+  headers = await ensureColumn(headers, headerRowNumber, "Carrier / Status", TRACKING_ALIASES["Carrier / Status"], target);
   headers = await ensureColumn(headers, headerRowNumber, "Dispatch Photo Link", TRACKING_ALIASES["Dispatch Photo Link"], target);
   clearSheetCache(target);
 
@@ -616,10 +616,6 @@ export async function findShippingRowByTracking(trackingId: string, target?: She
 
   if (trackingIndex === -1) {
     throw new Error(`Missing required tracking column. Accepted headers: ${TRACKING_ALIASES["Tracking ID"].join(", ")}.`);
-  }
-
-  if (statusIndex === -1) {
-    throw new Error(`Missing required status column. Accepted headers: ${TRACKING_ALIASES["Carrier / Status"].join(", ")}.`);
   }
 
   const rowIndex = rows.findIndex((row) => normalizeTrackingValue(String(row[trackingIndex] ?? "")) === normalizedTracking);
@@ -651,7 +647,8 @@ export async function updateShippingStatus(rowNumber: number, status: string, ta
   }
 
   const resolved = resolveTarget(target);
-  const { headers } = await readSheetValues(target, "shipping");
+  const { headers: sheetHeaders, headerRowNumber } = await readSheetValues(target, "shipping");
+  const headers = await ensureColumn(sheetHeaders, headerRowNumber, "Carrier / Status", TRACKING_ALIASES["Carrier / Status"], target);
   const statusIndex = findAliasedColumn(headers, TRACKING_ALIASES["Carrier / Status"]);
 
   if (statusIndex === -1) {
