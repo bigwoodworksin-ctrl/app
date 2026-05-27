@@ -30,6 +30,11 @@ type PhotoSlot = {
   url: string;
 };
 
+type UploadProgress = {
+  id: string;
+  label: string;
+};
+
 type Diagnostics = {
   headers: string[];
   headerRowNumber: number;
@@ -76,7 +81,7 @@ const ACTIVE_PROFILE_KEY = "order-photo-manager-active-profile";
 const ACTIVE_PROFILE_IDS_KEY = "order-photo-manager-active-profile-ids";
 const SEARCH_DELAY_MS = 300;
 const MAX_PHOTOS_PER_UPLOAD = 3;
-const SHIPPING_STATUSES = ["Packed", "Dispatched", "Delivered", "Shipment On Hold", "In Transit", "Failed", "Clearance Event"];
+const SHIPPING_STATUSES = ["New", "Packed", "Dispatched", "Delivered", "Shipment On Hold", "In Transit", "Failed", "Clearance Event"];
 
 function friendlyStatus(status: string): string {
   return status.trim() || "No status";
@@ -128,6 +133,10 @@ function getRowPhotoLinks(row: SearchRow): PhotoSlot[] {
   return row.photoLinks?.length ? row.photoLinks : parsePhotoLinks(row.photoLink);
 }
 
+function rowUploadKey(row: SearchRow): string {
+  return `${row.sheetId ?? "default"}:${row.tabName ?? "default"}:${row.rowNumber}`;
+}
+
 export default function HomePage() {
   const [password, setPassword] = useState("");
   const [token, setToken] = useState<string | null>(null);
@@ -135,7 +144,7 @@ export default function HomePage() {
   const [rows, setRows] = useState<SearchRow[]>([]);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
-  const [uploadingRow, setUploadingRow] = useState<number | null>(null);
+  const [uploadingPhotos, setUploadingPhotos] = useState<Record<string, UploadProgress[]>>({});
   const [deletingPhoto, setDeletingPhoto] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [diagnostics, setDiagnostics] = useState<Diagnostics | null>(null);
@@ -165,6 +174,7 @@ export default function HomePage() {
   const scannerStreamRef = useRef<MediaStream | null>(null);
   const scannerFrameRef = useRef<number | null>(null);
   const scannerBusyRef = useRef(false);
+  const photoUploadQueuesRef = useRef<Record<string, Promise<void>>>({});
 
   useEffect(() => {
     setToken(window.localStorage.getItem(TOKEN_KEY));
@@ -650,7 +660,7 @@ export default function HomePage() {
     }
   }
 
-  async function handlePhotoChange(row: SearchRow, event: ChangeEvent<HTMLInputElement>) {
+  function handlePhotoChange(row: SearchRow, event: ChangeEvent<HTMLInputElement>) {
     const selectedFiles = Array.from(event.target.files ?? []);
     const files = selectedFiles.slice(0, MAX_PHOTOS_PER_UPLOAD);
     event.target.value = "";
@@ -659,10 +669,20 @@ export default function HomePage() {
       return;
     }
 
-    setUploadingRow(row.rowNumber);
+    const key = rowUploadKey(row);
+    const startNumber = getRowPhotoLinks(row).length + (uploadingPhotos[key]?.length ?? 0) + 1;
+    const progressItems = files.map((file, index) => ({
+      id: `${Date.now()}-${index}-${file.name}`,
+      label: `Photo ${startNumber + index} uploading...`
+    }));
+
+    setUploadingPhotos((currentUploads) => ({
+      ...currentUploads,
+      [key]: [...(currentUploads[key] ?? []), ...progressItems]
+    }));
     setError(selectedFiles.length > MAX_PHOTOS_PER_UPLOAD ? "Uploading the first 3 selected images." : "");
 
-    try {
+    const uploadTask = async () => {
       const photos = await Promise.all(files.map((file) => compressImage(file)));
       const response = await fetch("/api/upload-photo", {
         method: "POST",
@@ -688,7 +708,7 @@ export default function HomePage() {
 
       setRows((currentRows) =>
         currentRows.map((currentRow) =>
-          currentRow.rowNumber === row.rowNumber
+          rowUploadKey(currentRow) === key
             ? {
                 ...currentRow,
                 photoLinks: [...getRowPhotoLinks(currentRow).filter((photo) => !uploadedLinks.some((newPhoto) => newPhoto.slot === photo.slot)), ...uploadedLinks].sort(
@@ -702,11 +722,37 @@ export default function HomePage() {
             : currentRow
         )
       );
-    } catch (uploadError) {
-      setError((uploadError as Error).message);
-    } finally {
-      setUploadingRow(null);
-    }
+    };
+
+    const previousUpload = photoUploadQueuesRef.current[key] ?? Promise.resolve();
+    const nextUpload = previousUpload
+      .catch(() => undefined)
+      .then(uploadTask)
+      .catch((uploadError) => {
+        setError((uploadError as Error).message);
+      })
+      .finally(() => {
+        setUploadingPhotos((currentUploads) => {
+          const remainingUploads = (currentUploads[key] ?? []).filter(
+            (item) => !progressItems.some((progressItem) => progressItem.id === item.id)
+          );
+          const nextUploads = { ...currentUploads };
+
+          if (remainingUploads.length) {
+            nextUploads[key] = remainingUploads;
+          } else {
+            delete nextUploads[key];
+          }
+
+          return nextUploads;
+        });
+
+        if (photoUploadQueuesRef.current[key] === nextUpload) {
+          delete photoUploadQueuesRef.current[key];
+        }
+      });
+
+    photoUploadQueuesRef.current[key] = nextUpload;
   }
 
   async function handleDeletePhoto(row: SearchRow, photo: PhotoSlot) {
@@ -714,7 +760,7 @@ export default function HomePage() {
       return;
     }
 
-    const deleteKey = `${row.rowNumber}-${photo.slot}`;
+    const deleteKey = `${rowUploadKey(row)}-${photo.slot}`;
     setDeletingPhoto(deleteKey);
     setError("");
 
@@ -741,7 +787,7 @@ export default function HomePage() {
 
       setRows((currentRows) =>
         currentRows.map((currentRow) => {
-          if (currentRow.rowNumber !== row.rowNumber) {
+          if (rowUploadKey(currentRow) !== rowUploadKey(row)) {
             return currentRow;
           }
 
@@ -872,7 +918,7 @@ export default function HomePage() {
         throw new Error(data.error ?? "Dispatch photo upload failed.");
       }
 
-      setShippingRow({ ...shippingRow, dispatchPhotoLink: data.imageUrl });
+      setShippingRow({ ...shippingRow, dispatchPhotoLink: data.imageUrl, status: "Packed" });
     } catch (dispatchError) {
       setError((dispatchError as Error).message);
     } finally {
@@ -1189,7 +1235,7 @@ export default function HomePage() {
         ) : null}
 
         {rows.map((row) => (
-          <article className="result-card" key={row.rowNumber}>
+          <article className="result-card" key={rowUploadKey(row)}>
             <div className="card-head">
               <span className="row-number">Row {row.rowNumber}</span>
               <span className={`status-badge ${row.priority === 2 ? "status-done" : "status-active"}`}>
@@ -1216,9 +1262,9 @@ export default function HomePage() {
                       className="delete-photo-button"
                       type="button"
                       onClick={() => handleDeletePhoto(row, photo)}
-                      disabled={deletingPhoto === `${row.rowNumber}-${photo.slot}` || uploadingRow !== null}
+                      disabled={deletingPhoto === `${rowUploadKey(row)}-${photo.slot}`}
                     >
-                      {deletingPhoto === `${row.rowNumber}-${photo.slot}` ? "Deleting..." : "Delete"}
+                      {deletingPhoto === `${rowUploadKey(row)}-${photo.slot}` ? "Deleting..." : "Delete"}
                     </button>
                   </div>
                 ))}
@@ -1227,16 +1273,25 @@ export default function HomePage() {
               <p className="muted">No photo link yet</p>
             )}
 
-            <label className={`file-button ${uploadingRow === row.rowNumber ? "is-loading" : ""}`}>
+            {(uploadingPhotos[rowUploadKey(row)] ?? []).length > 0 ? (
+              <div className="upload-progress-list" aria-live="polite">
+                {(uploadingPhotos[rowUploadKey(row)] ?? []).map((item) => (
+                  <div className="upload-progress-line" key={item.id}>
+                    {item.label}
+                  </div>
+                ))}
+              </div>
+            ) : null}
+
+            <label className="file-button">
               <input
                 type="file"
                 accept="image/*"
                 capture="environment"
                 multiple
-                disabled={uploadingRow !== null}
                 onChange={(event) => handlePhotoChange(row, event)}
               />
-              {uploadingRow === row.rowNumber ? "Uploading..." : "Add Photos"}
+              Add Photo
             </label>
           </article>
         ))}
@@ -1286,7 +1341,7 @@ export default function HomePage() {
               <p className="personalization">{shippingRow.personalization || shippingRow.trackingId}</p>
               <p className="muted">Tracking: {shippingRow.trackingId}</p>
               <div className="field-row">
-                <label htmlFor="shipping-status">Carrier / Status</label>
+                <label htmlFor="shipping-status">Internal Status</label>
                 <select
                   id="shipping-status"
                   value={shippingRow.status || ""}

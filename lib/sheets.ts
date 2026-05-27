@@ -9,6 +9,8 @@ const COLUMN_ALIASES: Record<(typeof REQUIRED_COLUMNS)[number], string[]> = {
   Personalization: ["Personalization", "Personalisation", "Personalized", "Personalized Text"]
 };
 const CACHE_TTL_MS = 45_000;
+const INTERNAL_STATUS_HEADER = "Internal Status";
+const INTERNAL_STATUS_ALIASES = ["Internal Status", "Internal", "Order Status", "Packing Status"];
 const TRACKING_COLUMNS = ["Tracking ID", "Carrier / Status", "Dispatch Photo Link"] as const;
 const TRACKING_ALIASES: Record<(typeof TRACKING_COLUMNS)[number], string[]> = {
   "Tracking ID": [
@@ -636,12 +638,12 @@ export async function findShippingRowByTracking(trackingId: string, target?: She
   }
 
   let { headers, headerRowNumber, rows } = await readSheetValues(target, "shipping");
-  headers = await ensureColumn(headers, headerRowNumber, "Carrier / Status", TRACKING_ALIASES["Carrier / Status"], target);
+  headers = await ensureColumn(headers, headerRowNumber, INTERNAL_STATUS_HEADER, INTERNAL_STATUS_ALIASES, target);
   headers = await ensureColumn(headers, headerRowNumber, "Dispatch Photo Link", TRACKING_ALIASES["Dispatch Photo Link"], target);
   clearSheetCache(target);
 
   const trackingIndex = findTrackingColumn(headers);
-  const statusIndex = findAliasedColumn(headers, TRACKING_ALIASES["Carrier / Status"]);
+  const statusIndex = findAliasedColumn(headers, INTERNAL_STATUS_ALIASES);
   const personalizationIndex = findAliasedColumn(headers, COLUMN_ALIASES.Personalization);
   const dispatchPhotoIndex = findAliasedColumn(headers, TRACKING_ALIASES["Dispatch Photo Link"]);
 
@@ -656,13 +658,16 @@ export async function findShippingRowByTracking(trackingId: string, target?: She
   }
 
   const row = rows[rowIndex];
+  const dispatchPhotoLink =
+    dispatchPhotoIndex >= 0 ? extractPhotoUrls(row[dispatchPhotoIndex] ?? "")[0] ?? row[dispatchPhotoIndex] ?? "" : "";
+  const internalStatus = row[statusIndex] ?? "";
 
   return {
     rowNumber: headerRowNumber + rowIndex + 1,
     trackingId: row[trackingIndex] ?? "",
-    status: row[statusIndex] ?? "",
+    status: internalStatus || (dispatchPhotoLink ? "Packed" : "New"),
     personalization: personalizationIndex >= 0 ? row[personalizationIndex] ?? "" : "",
-    dispatchPhotoLink: dispatchPhotoIndex >= 0 ? extractPhotoUrls(row[dispatchPhotoIndex] ?? "")[0] ?? row[dispatchPhotoIndex] ?? "" : ""
+    dispatchPhotoLink
   };
 }
 
@@ -679,11 +684,11 @@ export async function updateShippingStatus(rowNumber: number, status: string, ta
 
   const resolved = resolveTarget(target);
   const { headers: sheetHeaders, headerRowNumber } = await readSheetValues(target, "shipping");
-  const headers = await ensureColumn(sheetHeaders, headerRowNumber, "Carrier / Status", TRACKING_ALIASES["Carrier / Status"], target);
-  const statusIndex = findAliasedColumn(headers, TRACKING_ALIASES["Carrier / Status"]);
+  const headers = await ensureColumn(sheetHeaders, headerRowNumber, INTERNAL_STATUS_HEADER, INTERNAL_STATUS_ALIASES, target);
+  const statusIndex = findAliasedColumn(headers, INTERNAL_STATUS_ALIASES);
 
   if (statusIndex === -1) {
-    throw new Error(`Missing required status column. Accepted headers: ${TRACKING_ALIASES["Carrier / Status"].join(", ")}.`);
+    throw new Error(`Missing required status column. Accepted headers: ${INTERNAL_STATUS_ALIASES.join(", ")}.`);
   }
 
   try {
@@ -711,16 +716,26 @@ export async function updateDispatchPhoto(rowNumber: number, imageUrl: string, t
 
   const resolved = resolveTarget(target);
   let { headers, headerRowNumber } = await readSheetValues(target, "shipping");
+  headers = await ensureColumn(headers, headerRowNumber, INTERNAL_STATUS_HEADER, INTERNAL_STATUS_ALIASES, target);
   headers = await ensureColumn(headers, headerRowNumber, "Dispatch Photo Link", TRACKING_ALIASES["Dispatch Photo Link"], target);
+  const statusIndex = findAliasedColumn(headers, INTERNAL_STATUS_ALIASES);
   const dispatchPhotoIndex = findAliasedColumn(headers, TRACKING_ALIASES["Dispatch Photo Link"]);
 
   try {
-    await getSheetsClient().spreadsheets.values.update({
+    await getSheetsClient().spreadsheets.values.batchUpdate({
       spreadsheetId: resolved.spreadsheetId,
-      range: `${quoteSheetName(resolved.tabName)}!${columnLetter(dispatchPhotoIndex)}${rowNumber}`,
-      valueInputOption: "USER_ENTERED",
       requestBody: {
-        values: [[imageUrl]]
+        valueInputOption: "USER_ENTERED",
+        data: [
+          {
+            range: `${quoteSheetName(resolved.tabName)}!${columnLetter(dispatchPhotoIndex)}${rowNumber}`,
+            values: [[imageUrl]]
+          },
+          {
+            range: `${quoteSheetName(resolved.tabName)}!${columnLetter(statusIndex)}${rowNumber}`,
+            values: [["Packed"]]
+          }
+        ]
       }
     });
   } catch (error) {

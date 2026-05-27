@@ -688,6 +688,25 @@ select:focus {
   font-weight: 850;
 }
 
+.upload-progress-list {
+  display: grid;
+  gap: 7px;
+  margin: 0 0 10px;
+}
+
+.upload-progress-line {
+  min-height: 38px;
+  display: flex;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  color: var(--primary-dark);
+  background: var(--surface-strong);
+  font-size: 0.9rem;
+  font-weight: 850;
+}
+
 .file-button {
   width: 100%;
   margin-top: 12px;
