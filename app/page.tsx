@@ -82,7 +82,7 @@ const ACTIVE_PROFILE_KEY = "order-photo-manager-active-profile";
 const ACTIVE_PROFILE_IDS_KEY = "order-photo-manager-active-profile-ids";
 const SEARCH_DELAY_MS = 300;
 const MAX_PHOTOS_PER_UPLOAD = 3;
-const SHIPPING_STATUSES = ["New", "Packed", "Dispatched", "Delivered", "Shipment On Hold", "In Transit", "Failed", "Clearance Event"];
+const SHIPPING_STATUSES = ["Dispatched", "Hold for confirmation", "Packed after Cut-off", "Opertion Team Error"];
 
 function friendlyStatus(status: string): string {
   return status.trim() || "No status";
