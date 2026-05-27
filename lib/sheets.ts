@@ -443,6 +443,7 @@ export async function searchSheetRows(query: string, limit = 100, target?: Sheet
   return rows
     .map((row, index) => {
       const status = row[statusIndex] ?? "";
+      const traceValue = traceIndex >= 0 ? row[traceIndex] ?? "" : "";
 
       const photoLinks = photoIndexes
         .map((photoIndex, photoIndexPosition) => {
@@ -463,18 +464,16 @@ export async function searchSheetRows(query: string, limit = 100, target?: Sheet
         photoLinks,
         status,
         personalization: row[personalizationIndex] ?? "",
-        priority: getPriority(status)
+        priority: getPriority(status),
+        traceValue
       };
     })
     .filter((row) => row.personalization.trim())
     .filter((row) => !normalizedQuery || row.personalization.toLowerCase().includes(normalizedQuery))
-    .filter((row, index) => {
-      const sourceRow = rows[index] ?? [];
-      const traceValue = traceIndex >= 0 ? sourceRow[traceIndex] ?? "" : "";
-      return shouldShowInPhotoSearch(traceValue);
-    })
+    .filter((row) => shouldShowInPhotoSearch(row.traceValue))
     .sort((a, b) => a.priority - b.priority || a.rowNumber - b.rowNumber)
-    .slice(0, limit);
+    .slice(0, limit)
+    .map(({ traceValue, ...row }) => row);
 }
 
 export async function updateOrderInternalStatus(rowNumber: number, status: string, target?: SheetTarget): Promise<void> {
