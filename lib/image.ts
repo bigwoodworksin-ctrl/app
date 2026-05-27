@@ -49,7 +49,7 @@ function loadImage(file: File): Promise<HTMLImageElement> {
   });
 }
 
-export async function compressImage(file: File, maxWidth = 1200, quality = 0.8): Promise<CompressedImage> {
+export async function compressImage(file: File, maxWidth = 900, quality = 0.68): Promise<CompressedImage> {
   const image = await loadImage(file);
   const scale = Math.min(1, maxWidth / image.naturalWidth);
   const width = Math.round(image.naturalWidth * scale);

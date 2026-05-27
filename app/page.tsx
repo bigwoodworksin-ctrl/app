@@ -685,7 +685,8 @@ export default function HomePage() {
     setError(selectedFiles.length > MAX_PHOTOS_PER_UPLOAD ? "Uploading the first 3 selected images." : "");
 
     try {
-      const photos = await Promise.all(files.map((file) => compressImage(file)));
+      for (const [fileIndex, file] of files.entries()) {
+        const photo = await compressImage(file);
       const response = await fetch("/api/upload-photo", {
         method: "POST",
         headers: {
@@ -696,11 +697,18 @@ export default function HomePage() {
           rowTargetBody(row, {
             rowNumber: row.rowNumber,
             personalization: row.personalization,
-            photos
+              photos: [photo]
           })
         )
       });
-      const data = (await response.json()) as { success?: boolean; photoLinks?: PhotoSlot[]; error?: string };
+        const responseText = await response.text();
+        let data: { success?: boolean; photoLinks?: PhotoSlot[]; error?: string };
+
+        try {
+          data = JSON.parse(responseText) as { success?: boolean; photoLinks?: PhotoSlot[]; error?: string };
+        } catch {
+          throw new Error(responseText || `Photo upload failed with status ${response.status}.`);
+        }
 
       if (!response.ok || !data.success || !data.photoLinks) {
         throw new Error(data.error ?? "Photo upload failed.");
@@ -724,6 +732,14 @@ export default function HomePage() {
             : currentRow
         )
       );
+
+        setUploadingPhotos((currentUploads) => ({
+          ...currentUploads,
+          [key]: (currentUploads[key] ?? []).map((item) =>
+            item.id === progressItems[fileIndex]?.id ? { ...item, label: item.label.replace("uploading...", "uploaded") } : item
+          )
+        }));
+      }
     } catch (uploadError) {
       const message = (uploadError as Error).message;
 
