@@ -116,6 +116,21 @@ function normalizeTrackingValue(value: string): string {
   return value.trim().toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
+function trackingValuesMatch(left: string, right: string): boolean {
+  const normalizedLeft = normalizeTrackingValue(left);
+  const normalizedRight = normalizeTrackingValue(right);
+
+  if (!normalizedLeft || !normalizedRight) {
+    return false;
+  }
+
+  return (
+    normalizedLeft === normalizedRight ||
+    normalizedLeft.includes(normalizedRight) ||
+    normalizedRight.includes(normalizedLeft)
+  );
+}
+
 function columnLetter(index: number): string {
   let dividend = index + 1;
   let column = "";
@@ -368,7 +383,7 @@ async function readSheetValues(target?: SheetTarget, mode: SheetMode = "orders")
     response = await sheets.spreadsheets.values.get({
       spreadsheetId: resolved.spreadsheetId,
       range: `${quoteSheetName(resolved.tabName)}!A:ZZ`,
-      valueRenderOption: "FORMULA"
+      valueRenderOption: mode === "shipping" ? "FORMATTED_VALUE" : "FORMULA"
     });
   } catch (error) {
     throw new Error(
@@ -634,7 +649,7 @@ export async function findShippingRowByTracking(trackingId: string, target?: She
     throw new Error(`Missing required tracking column. Accepted headers: ${TRACKING_ALIASES["Tracking ID"].join(", ")}.`);
   }
 
-  const rowIndex = rows.findIndex((row) => normalizeTrackingValue(String(row[trackingIndex] ?? "")) === normalizedTracking);
+  const rowIndex = rows.findIndex((row) => trackingValuesMatch(String(row[trackingIndex] ?? ""), normalizedTracking));
 
   if (rowIndex === -1) {
     return null;

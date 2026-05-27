@@ -65,6 +65,9 @@ type ShippingRow = {
   status: string;
   personalization: string;
   dispatchPhotoLink: string;
+  sheetId?: string;
+  tabName?: string;
+  sheetName?: string;
 };
 
 const TOKEN_KEY = "order-photo-manager-token";
@@ -768,7 +771,7 @@ export default function HomePage() {
     setShippingRow(null);
 
     try {
-      const response = await fetch(targetUrl("/api/shipping/search", { trackingId: trackingId.trim() }), {
+      const response = await fetch(searchUrl("/api/shipping/search", { trackingId: trackingId.trim() }), {
         headers: {
           "x-app-token": token
         }
@@ -812,10 +815,12 @@ export default function HomePage() {
           "x-app-token": token
         },
         body: JSON.stringify(
-          targetBody({
+          {
             rowNumber: shippingRow.rowNumber,
-            status
-          })
+            status,
+            sheetId: shippingRow.sheetId || selectedTarget.sheetId || undefined,
+            tabName: shippingRow.tabName || selectedTarget.tabName || undefined
+          }
         )
       });
       const data = (await response.json()) as { success?: boolean; error?: string };
@@ -852,11 +857,13 @@ export default function HomePage() {
           "x-app-token": token
         },
         body: JSON.stringify(
-          targetBody({
+          {
             rowNumber: shippingRow.rowNumber,
             trackingId: shippingRow.trackingId,
+            sheetId: shippingRow.sheetId || selectedTarget.sheetId || undefined,
+            tabName: shippingRow.tabName || selectedTarget.tabName || undefined,
             ...compressed
-          })
+          }
         )
       });
       const data = (await response.json()) as { success?: boolean; imageUrl?: string; error?: string };
@@ -1271,6 +1278,11 @@ export default function HomePage() {
                 <span className="row-number">Row {shippingRow.rowNumber}</span>
                 <span className="status-badge status-active">{shippingRow.status || "No status"}</span>
               </div>
+              {shippingRow.sheetName || shippingRow.tabName ? (
+                <p className="muted source-line">
+                  {[shippingRow.sheetName, shippingRow.tabName].filter(Boolean).join(" / ")}
+                </p>
+              ) : null}
               <p className="personalization">{shippingRow.personalization || shippingRow.trackingId}</p>
               <p className="muted">Tracking: {shippingRow.trackingId}</p>
               <div className="field-row">
