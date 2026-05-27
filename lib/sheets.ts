@@ -10,7 +10,8 @@ const COLUMN_ALIASES: Record<(typeof REQUIRED_COLUMNS)[number], string[]> = {
 };
 const CACHE_TTL_MS = 45_000;
 const INTERNAL_STATUS_HEADER = "trace";
-const INTERNAL_STATUS_ALIASES = ["trace", "Internal Status", "Internal", "Order Status", "Packing Status"];
+const INTERNAL_STATUS_ALIASES = ["trace"];
+const LEGACY_INTERNAL_STATUS_ALIASES = ["Internal Status", "Internal", "Order Status", "Packing Status"];
 const TRACKING_COLUMNS = ["Tracking ID", "Carrier / Status", "Dispatch Photo Link"] as const;
 const TRACKING_ALIASES: Record<(typeof TRACKING_COLUMNS)[number], string[]> = {
   "Tracking ID": [
@@ -436,7 +437,7 @@ export async function searchSheetRows(query: string, limit = 100, target?: Sheet
   const photoIndexes = getPhotoColumnIndexes(headers);
   const statusIndex = findColumn(headers, "Carrier / Status");
   const personalizationIndex = findColumn(headers, "Personalization");
-  const traceIndex = findAliasedColumn(headers, INTERNAL_STATUS_ALIASES);
+  const traceIndex = findAliasedColumn(headers, [INTERNAL_STATUS_HEADER]);
   const normalizedQuery = query.trim().toLowerCase();
 
   return rows
@@ -465,6 +466,7 @@ export async function searchSheetRows(query: string, limit = 100, target?: Sheet
         priority: getPriority(status)
       };
     })
+    .filter((row) => row.personalization.trim())
     .filter((row) => !normalizedQuery || row.personalization.toLowerCase().includes(normalizedQuery))
     .filter((row, index) => {
       const sourceRow = rows[index] ?? [];
@@ -693,7 +695,7 @@ export async function findShippingRowByTracking(trackingId: string, target?: She
   clearSheetCache(target);
 
   const trackingIndex = findTrackingColumn(headers);
-  const statusIndex = findAliasedColumn(headers, INTERNAL_STATUS_ALIASES);
+  const statusIndex = findAliasedColumn(headers, [...INTERNAL_STATUS_ALIASES, ...LEGACY_INTERNAL_STATUS_ALIASES]);
   const personalizationIndex = findAliasedColumn(headers, COLUMN_ALIASES.Personalization);
   const dispatchPhotoIndex = findAliasedColumn(headers, TRACKING_ALIASES["Dispatch Photo Link"]);
 
@@ -735,7 +737,7 @@ export async function updateShippingStatus(rowNumber: number, status: string, ta
   const resolved = resolveTarget(target);
   const { headers: sheetHeaders, headerRowNumber } = await readSheetValues(target, "shipping");
   const headers = await ensureColumn(sheetHeaders, headerRowNumber, INTERNAL_STATUS_HEADER, INTERNAL_STATUS_ALIASES, target);
-  const statusIndex = findAliasedColumn(headers, INTERNAL_STATUS_ALIASES);
+  const statusIndex = findAliasedColumn(headers, [...INTERNAL_STATUS_ALIASES, ...LEGACY_INTERNAL_STATUS_ALIASES]);
 
   if (statusIndex === -1) {
     throw new Error(`Missing required status column. Accepted headers: ${INTERNAL_STATUS_ALIASES.join(", ")}.`);
@@ -768,7 +770,7 @@ export async function updateDispatchPhoto(rowNumber: number, imageUrl: string, t
   let { headers, headerRowNumber } = await readSheetValues(target, "shipping");
   headers = await ensureColumn(headers, headerRowNumber, INTERNAL_STATUS_HEADER, INTERNAL_STATUS_ALIASES, target);
   headers = await ensureColumn(headers, headerRowNumber, "Dispatch Photo Link", TRACKING_ALIASES["Dispatch Photo Link"], target);
-  const statusIndex = findAliasedColumn(headers, INTERNAL_STATUS_ALIASES);
+  const statusIndex = findAliasedColumn(headers, [...INTERNAL_STATUS_ALIASES, ...LEGACY_INTERNAL_STATUS_ALIASES]);
   const dispatchPhotoIndex = findAliasedColumn(headers, TRACKING_ALIASES["Dispatch Photo Link"]);
 
   try {
