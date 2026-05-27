@@ -177,6 +177,7 @@ export default function HomePage() {
   const [isSearchingTracking, setIsSearchingTracking] = useState(false);
   const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
   const [isUploadingDispatch, setIsUploadingDispatch] = useState(false);
+  const [isDeletingDispatch, setIsDeletingDispatch] = useState(false);
   const [scanMessage, setScanMessage] = useState("");
   const [isLiveScanning, setIsLiveScanning] = useState(false);
   const [scannerError, setScannerError] = useState("");
@@ -1020,6 +1021,42 @@ export default function HomePage() {
     }
   }
 
+  async function handleDeleteDispatchPhoto() {
+    if (!token || !shippingRow?.dispatchPhotoLink) {
+      return;
+    }
+
+    setIsDeletingDispatch(true);
+    setError("");
+
+    try {
+      const response = await fetch("/api/shipping/delete-dispatch-photo", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-app-token": token
+        },
+        body: JSON.stringify({
+          rowNumber: shippingRow.rowNumber,
+          imageUrl: shippingRow.dispatchPhotoLink,
+          sheetId: shippingRow.sheetId || selectedTarget.sheetId || undefined,
+          tabName: shippingRow.tabName || selectedTarget.tabName || undefined
+        })
+      });
+      const data = (await response.json()) as { success?: boolean; error?: string };
+
+      if (!response.ok || !data.success) {
+        throw new Error(data.error ?? "Dispatch photo delete failed.");
+      }
+
+      setShippingRow({ ...shippingRow, dispatchPhotoLink: "" });
+    } catch (deleteError) {
+      setError((deleteError as Error).message);
+    } finally {
+      setIsDeletingDispatch(false);
+    }
+  }
+
   function stopLiveScanner() {
     if (scannerFrameRef.current !== null) {
       window.cancelAnimationFrame(scannerFrameRef.current);
@@ -1496,9 +1533,19 @@ export default function HomePage() {
                 </select>
               </div>
               {shippingRow.dispatchPhotoLink ? (
-                <a className="photo-link dispatch-link" href={shippingRow.dispatchPhotoLink} target="_blank" rel="noreferrer">
-                  Open Dispatch Photo
-                </a>
+                <div className="photo-link-row dispatch-link">
+                  <a className="photo-link" href={shippingRow.dispatchPhotoLink} target="_blank" rel="noreferrer">
+                    Open Dispatch Photo
+                  </a>
+                  <button
+                    className="delete-photo-button"
+                    type="button"
+                    onClick={handleDeleteDispatchPhoto}
+                    disabled={isDeletingDispatch || isUploadingDispatch}
+                  >
+                    {isDeletingDispatch ? "Deleting..." : "Delete"}
+                  </button>
+                </div>
               ) : (
                 <p className="muted">No dispatch photo yet</p>
               )}

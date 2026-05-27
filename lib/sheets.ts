@@ -133,8 +133,8 @@ function trackingValuesMatch(left: string, right: string): boolean {
   );
 }
 
-function isPhotoSearchTrace(status: string): boolean {
-  const normalized = normalizeHeader(status);
+function shouldShowInPhotoSearch(traceValue: string): boolean {
+  const normalized = normalizeHeader(traceValue);
   return !normalized || normalized === "new";
 }
 
@@ -435,13 +435,12 @@ export async function searchSheetRows(query: string, limit = 100, target?: Sheet
   const photoIndexes = getPhotoColumnIndexes(headers);
   const statusIndex = findColumn(headers, "Carrier / Status");
   const personalizationIndex = findColumn(headers, "Personalization");
-  const internalStatusIndex = findAliasedColumn(headers, INTERNAL_STATUS_ALIASES);
+  const traceIndex = findAliasedColumn(headers, INTERNAL_STATUS_ALIASES);
   const normalizedQuery = query.trim().toLowerCase();
 
   return rows
     .map((row, index) => {
-      const internalStatus = internalStatusIndex >= 0 ? row[internalStatusIndex] ?? "" : "";
-      const status = internalStatus || (row[statusIndex] ?? "");
+      const status = row[statusIndex] ?? "";
 
       const photoLinks = photoIndexes
         .map((photoIndex, photoIndexPosition) => {
@@ -466,7 +465,11 @@ export async function searchSheetRows(query: string, limit = 100, target?: Sheet
       };
     })
     .filter((row) => !normalizedQuery || row.personalization.toLowerCase().includes(normalizedQuery))
-    .filter((row) => isPhotoSearchTrace(row.status))
+    .filter((row, index) => {
+      const sourceRow = rows[index] ?? [];
+      const traceValue = traceIndex >= 0 ? sourceRow[traceIndex] ?? "" : "";
+      return shouldShowInPhotoSearch(traceValue);
+    })
     .sort((a, b) => a.priority - b.priority || a.rowNumber - b.rowNumber)
     .slice(0, limit);
 }
@@ -787,6 +790,33 @@ export async function updateDispatchPhoto(rowNumber: number, imageUrl: string, t
   } catch (error) {
     throw new Error(
       `Google Sheets dispatch photo update failed: ${googleApiMessage(error)}. Share the spreadsheet with ${resolved.serviceAccountEmail} as Editor.`
+    );
+  }
+
+  clearSheetCache(target);
+}
+
+export async function clearDispatchPhoto(rowNumber: number, target?: SheetTarget): Promise<void> {
+  if (!Number.isInteger(rowNumber) || rowNumber < 1) {
+    throw new Error("Invalid row number. Expected a data row from the Google Sheet.");
+  }
+
+  const resolved = resolveTarget(target);
+  const { headers } = await readSheetValues(target, "shipping");
+  const dispatchPhotoIndex = findAliasedColumn(headers, TRACKING_ALIASES["Dispatch Photo Link"]);
+
+  if (dispatchPhotoIndex === -1) {
+    throw new Error(`Missing dispatch photo column. Accepted headers: ${TRACKING_ALIASES["Dispatch Photo Link"].join(", ")}.`);
+  }
+
+  try {
+    await getSheetsClient().spreadsheets.values.clear({
+      spreadsheetId: resolved.spreadsheetId,
+      range: `${quoteSheetName(resolved.tabName)}!${columnLetter(dispatchPhotoIndex)}${rowNumber}`
+    });
+  } catch (error) {
+    throw new Error(
+      `Google Sheets dispatch photo delete failed: ${googleApiMessage(error)}. Share the spreadsheet with ${resolved.serviceAccountEmail} as Editor.`
     );
   }
 
