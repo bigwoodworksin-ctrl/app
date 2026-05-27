@@ -1437,7 +1437,7 @@ export default function HomePage() {
               <p className="personalization">{shippingRow.personalization || shippingRow.trackingId}</p>
               <p className="muted">Tracking: {shippingRow.trackingId}</p>
               <div className="field-row">
-                <label htmlFor="shipping-status">Internal Status</label>
+                <label htmlFor="shipping-status">trace</label>
                 <select
                   id="shipping-status"
                   value={shippingRow.status || ""}

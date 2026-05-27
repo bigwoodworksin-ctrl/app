@@ -9,8 +9,8 @@ const COLUMN_ALIASES: Record<(typeof REQUIRED_COLUMNS)[number], string[]> = {
   Personalization: ["Personalization", "Personalisation", "Personalized", "Personalized Text"]
 };
 const CACHE_TTL_MS = 45_000;
-const INTERNAL_STATUS_HEADER = "Internal Status";
-const INTERNAL_STATUS_ALIASES = ["Internal Status", "Internal", "Order Status", "Packing Status"];
+const INTERNAL_STATUS_HEADER = "trace";
+const INTERNAL_STATUS_ALIASES = ["trace", "Internal Status", "Internal", "Order Status", "Packing Status"];
 const TRACKING_COLUMNS = ["Tracking ID", "Carrier / Status", "Dispatch Photo Link"] as const;
 const TRACKING_ALIASES: Record<(typeof TRACKING_COLUMNS)[number], string[]> = {
   "Tracking ID": [
@@ -474,7 +474,7 @@ export async function updateOrderInternalStatus(rowNumber: number, status: strin
   const nextStatus = status.trim();
 
   if (!nextStatus) {
-    throw new Error("Internal status cannot be blank.");
+    throw new Error("trace cannot be blank.");
   }
 
   const resolved = resolveTarget(target);
@@ -497,7 +497,7 @@ export async function updateOrderInternalStatus(rowNumber: number, status: strin
     });
   } catch (error) {
     throw new Error(
-      `Google Sheets internal status update failed: ${googleApiMessage(error)}. Share the spreadsheet with ${resolved.serviceAccountEmail} as Editor.`
+      `Google Sheets trace update failed: ${googleApiMessage(error)}. Share the spreadsheet with ${resolved.serviceAccountEmail} as Editor.`
     );
   }
 
